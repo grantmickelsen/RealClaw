@@ -1,0 +1,226 @@
+{
+  "defaultProvider": "manifest",
+  "tierMapping": {
+    "fast": {
+      "provider": "manifest",
+      "model": "auto"
+    },
+    "balanced": {
+      "provider": "manifest",
+      "model": "auto"
+    },
+    "powerful": {
+      "provider": "manifest",
+      "model": "auto"
+    }
+  },
+  "fallbackChain": ["anthropic", "openrouter"],
+  "agentOverrides": {
+    "research": {
+      "fast": {
+        "provider": "ollama",
+        "model": "llama3.3:8b"
+      }
+    }
+  },
+  "providers": {
+    "manifest": {
+      "id": "manifest",
+      "enabled": true,
+      "apiKeyEnvVar": "CLAW_MANIFEST_API_KEY",
+      "baseUrl": "http://manifest:3001",
+      "rateLimitPerMinute": 120,
+      "models": [
+        {
+          "modelString": "auto",
+          "tier": "fast",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": false }
+        },
+        {
+          "modelString": "auto",
+          "tier": "balanced",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": false }
+        },
+        {
+          "modelString": "auto",
+          "tier": "powerful",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": false }
+        }
+      ]
+    },
+    "anthropic": {
+      "id": "anthropic",
+      "enabled": true,
+      "apiKeyEnvVar": "CLAW_ANTHROPIC_API_KEY",
+      "baseUrl": "https://api.anthropic.com",
+      "rateLimitPerMinute": 60,
+      "models": [
+        {
+          "modelString": "claude-haiku-4-5-20251001",
+          "tier": "fast",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0.80, "outputPerMTok": 4.00, "isLocal": false }
+        },
+        {
+          "modelString": "claude-sonnet-4-6",
+          "tier": "balanced",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 3.00, "outputPerMTok": 15.00, "isLocal": false }
+        },
+        {
+          "modelString": "claude-opus-4-6",
+          "tier": "powerful",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 15.00, "outputPerMTok": 75.00, "isLocal": false }
+        }
+      ]
+    },
+    "openai": {
+      "id": "openai",
+      "enabled": false,
+      "apiKeyEnvVar": "CLAW_OPENAI_API_KEY",
+      "baseUrl": "https://api.openai.com",
+      "rateLimitPerMinute": 60,
+      "models": [
+        {
+          "modelString": "gpt-4o-mini",
+          "tier": "fast",
+          "contextWindow": 128000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0.15, "outputPerMTok": 0.60, "isLocal": false }
+        },
+        {
+          "modelString": "gpt-4o",
+          "tier": "balanced",
+          "contextWindow": 128000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 2.50, "outputPerMTok": 10.00, "isLocal": false }
+        },
+        {
+          "modelString": "o3",
+          "tier": "powerful",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 10.00, "outputPerMTok": 40.00, "isLocal": false }
+        }
+      ]
+    },
+    "ollama": {
+      "id": "ollama",
+      "enabled": false,
+      "apiKeyEnvVar": "",
+      "baseUrl": "http://127.0.0.1:11434",
+      "rateLimitPerMinute": 999,
+      "models": [
+        {
+          "modelString": "llama3.3:8b",
+          "tier": "fast",
+          "contextWindow": 131072,
+          "supportsTools": true,
+          "supportsVision": false,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": true }
+        },
+        {
+          "modelString": "llama3.3:70b",
+          "tier": "balanced",
+          "contextWindow": 131072,
+          "supportsTools": true,
+          "supportsVision": false,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": true }
+        },
+        {
+          "modelString": "qwen3:32b",
+          "tier": "powerful",
+          "contextWindow": 131072,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": true }
+        }
+      ]
+    },
+    "openrouter": {
+      "id": "openrouter",
+      "enabled": false,
+      "apiKeyEnvVar": "CLAW_OPENROUTER_API_KEY",
+      "baseUrl": "https://openrouter.ai/api/v1",
+      "rateLimitPerMinute": 60,
+      "models": [
+        {
+          "modelString": "anthropic/claude-haiku-4-5-20251001",
+          "tier": "fast",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0.80, "outputPerMTok": 4.00, "isLocal": false }
+        },
+        {
+          "modelString": "anthropic/claude-sonnet-4-6",
+          "tier": "balanced",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 3.00, "outputPerMTok": 15.00, "isLocal": false }
+        },
+        {
+          "modelString": "anthropic/claude-opus-4-6",
+          "tier": "powerful",
+          "contextWindow": 200000,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 15.00, "outputPerMTok": 75.00, "isLocal": false }
+        }
+      ]
+    },
+    "google": {
+      "id": "google",
+      "enabled": false,
+      "apiKeyEnvVar": "CLAW_GOOGLE_API_KEY",
+      "baseUrl": "https://generativelanguage.googleapis.com",
+      "rateLimitPerMinute": 60,
+      "models": [
+        {
+          "modelString": "gemini-2.0-flash",
+          "tier": "fast",
+          "contextWindow": 1048576,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 0.10, "outputPerMTok": 0.40, "isLocal": false }
+        },
+        {
+          "modelString": "gemini-2.5-pro",
+          "tier": "balanced",
+          "contextWindow": 1048576,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 1.25, "outputPerMTok": 10.00, "isLocal": false }
+        },
+        {
+          "modelString": "gemini-2.5-pro",
+          "tier": "powerful",
+          "contextWindow": 1048576,
+          "supportsTools": true,
+          "supportsVision": true,
+          "pricing": { "inputPerMTok": 1.25, "outputPerMTok": 10.00, "isLocal": false }
+        }
+      ]
+    }
+  }
+}

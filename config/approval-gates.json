@@ -1,0 +1,25 @@
+{
+  "defaults": {
+    "send_email_existing_contact": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 30 },
+    "send_email_new_contact": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 60 },
+    "send_sms": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 30 },
+    "send_linkedin_dm": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 60 },
+    "respond_zillow_lead": { "requiresApproval": false, "template": "zillow_auto_response" },
+    "modify_calendar_showing": { "requiresApproval": false },
+    "modify_calendar_other": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 14 },
+    "cancel_reschedule_event": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 30 },
+    "update_crm_contact": { "requiresApproval": false },
+    "post_social": { "requiresApproval": true, "canAutomate": true, "autoAfterDays": 60 },
+    "generate_content_internal": { "requiresApproval": false },
+    "research_data_pull": { "requiresApproval": false },
+    "transaction_milestone_update": { "requiresApproval": false, "notifyClient": true },
+    "send_document_contract": { "requiresApproval": true, "canAutomate": false },
+    "financial_action": { "requiresApproval": true, "canAutomate": false }
+  },
+  "overrides": {},
+  "approvalTimeout": {
+    "reminderAfterMs": 14400000,
+    "expireAfterMs": 86400000
+  },
+  "batchThreshold": 3
+}

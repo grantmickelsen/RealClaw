@@ -1,0 +1,12 @@
+node_modules/
+dist/
+.env
+credentials/
+memory/client-profile/
+memory/contacts/
+memory/transactions/
+memory/listings/
+*.jsonl
+coverage/
+.vitest-cache/
+whatsapp-session/

@@ -1,0 +1,154 @@
+version: '3.8'
+
+services:
+
+  # ─── RealClaw Gateway ─────────────────────────────────────────────────────
+  gateway:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "18789:18789"
+      - "3000:3000"       # OAuth callback server
+    volumes:
+      - ./memory:/opt/claw/memory
+      - ./credentials:/opt/claw/credentials
+      - ./config:/opt/claw/config
+      - /tmp/claw-browser:/tmp/claw-browser   # Browser sandbox
+    env_file:
+      - .env
+    environment:
+      # Override baseUrl at runtime so the gateway reaches Manifest by service name.
+      # This value is read by the factory when CLAW_MANIFEST_ENDPOINT is set.
+      CLAW_MANIFEST_ENDPOINT: http://manifest:3001
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    read_only: true
+    tmpfs:
+      - /tmp
+    networks:
+      - claw-internal
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:18789/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    depends_on:
+      manifest:
+        condition: service_started
+      browser:
+        condition: service_started
+
+  # ─── Manifest — Smart LLM Router ──────────────────────────────────────────
+  # Dashboard: http://localhost:3001
+  #
+  # First-time setup:
+  #   1. docker compose up -d manifest postgres
+  #   2. Open http://localhost:3001 and create an account.
+  #   3. Settings → Providers: add your LLM API keys (Anthropic, OpenAI, etc.).
+  #      Manifest stores them encrypted and uses them for routing — they never
+  #      need to be in RealClaw's .env.
+  #   4. Create an Agent and copy its API key (format: mnfst_…).
+  #   5. Add  CLAW_MANIFEST_API_KEY=mnfst_…  to your .env file.
+  #   6. docker compose up -d gateway
+  manifest:
+    image: manifestdotbuild/manifest:latest
+    ports:
+      - "3001:3001"
+    environment:
+      DATABASE_URL: postgresql://manifest:manifest@postgres:5432/manifest
+      BETTER_AUTH_SECRET: ${MANIFEST_AUTH_SECRET:-change-me-before-production!!-32chars}
+      BETTER_AUTH_URL: http://localhost:3001
+      SEED_DATA: "true"
+      # development enables TypeORM schema sync on first boot; safe for a local deployment
+      NODE_ENV: development
+      # Trust same-LAN connections so the gateway container can call Manifest
+      MANIFEST_TRUST_LAN: "true"
+    networks:
+      - claw-internal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:3001/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # ─── PostgreSQL — Manifest's backing store ────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: manifest
+      POSTGRES_PASSWORD: manifest
+      POSTGRES_DB: manifest
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks:
+      - claw-internal
+    healthcheck:
+      test: pg_isready -U manifest
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Browserless — Headless Chrome sandbox ────────────────────────────────
+  browser:
+    image: ghcr.io/browserless/chromium:latest
+    ports:
+      - "127.0.0.1:3002:3000"
+    environment:
+      - CONNECTION_TIMEOUT=120000
+      - MAX_CONCURRENT_SESSIONS=2
+    security_opt:
+      - no-new-privileges:true
+    networks:
+      - claw-internal
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+          cpus: '1.0'
+
+  # ─── LOCAL LLM (optional) ─────────────────────────────────────────────────
+  # Uncomment to run local models via Ollama. Requires NVIDIA GPU or enough
+  # CPU/RAM. After starting, pull models:
+  #   docker compose exec ollama ollama pull llama3.3:8b
+  # Then enable the ollama provider in config/models.json.
+
+  # ollama:
+  #   image: ollama/ollama:latest
+  #   ports:
+  #     - "11434:11434"
+  #   volumes:
+  #     - ollama-models:/root/.ollama
+  #   networks:
+  #     - claw-internal
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 3
+  #   deploy:
+  #     resources:
+  #       reservations:
+  #         devices:
+  #           - driver: nvidia
+  #             count: all
+  #             capabilities: [gpu]
+  #       limits:
+  #         memory: 32g
+
+networks:
+  claw-internal:
+    driver: bridge
+    
+
+volumes:
+  pgdata:
+  # Uncomment if using Ollama:
+  # ollama-models:

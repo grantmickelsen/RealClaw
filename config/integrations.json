@@ -1,0 +1,84 @@
+{
+  "integrations": [
+    {
+      "id": "gmail",
+      "authMethod": "oauth2",
+      "owningAgent": "comms",
+      "baseUrl": "https://gmail.googleapis.com",
+      "scopes": ["https://mail.google.com/"],
+      "rateLimitPerMinute": 250,
+      "enabled": false,
+      "healthCheckEndpoint": "/gmail/v1/users/me/profile"
+    },
+    {
+      "id": "google_calendar",
+      "authMethod": "oauth2",
+      "owningAgent": "calendar",
+      "baseUrl": "https://www.googleapis.com",
+      "scopes": ["https://www.googleapis.com/auth/calendar"],
+      "rateLimitPerMinute": 60,
+      "enabled": false,
+      "healthCheckEndpoint": "/calendar/v3/users/me/calendarList"
+    },
+    {
+      "id": "hubspot",
+      "authMethod": "oauth2",
+      "owningAgent": "relationship",
+      "baseUrl": "https://api.hubapi.com",
+      "scopes": ["crm.objects.contacts.read", "crm.objects.contacts.write"],
+      "rateLimitPerMinute": 100,
+      "enabled": false
+    },
+    {
+      "id": "twilio",
+      "authMethod": "credentials",
+      "owningAgent": "comms",
+      "baseUrl": "https://api.twilio.com",
+      "rateLimitPerMinute": 60,
+      "enabled": false
+    },
+    {
+      "id": "google_drive",
+      "authMethod": "oauth2",
+      "owningAgent": "ops",
+      "baseUrl": "https://www.googleapis.com",
+      "scopes": ["https://www.googleapis.com/auth/drive"],
+      "rateLimitPerMinute": 100,
+      "enabled": false
+    },
+    {
+      "id": "buffer",
+      "authMethod": "oauth2",
+      "owningAgent": "content",
+      "baseUrl": "https://api.bufferapp.com",
+      "scopes": ["publish"],
+      "rateLimitPerMinute": 60,
+      "enabled": false
+    },
+    {
+      "id": "docusign",
+      "authMethod": "oauth2",
+      "owningAgent": "transaction",
+      "baseUrl": "https://www.docusign.net",
+      "scopes": ["signature"],
+      "rateLimitPerMinute": 60,
+      "enabled": false
+    },
+    {
+      "id": "browser",
+      "authMethod": "local",
+      "owningAgent": "research",
+      "baseUrl": "http://localhost:3001",
+      "rateLimitPerMinute": 10,
+      "enabled": false
+    },
+    {
+      "id": "rentcast",
+      "authMethod": "api_key",
+      "owningAgent": "research",
+      "baseUrl": "https://api.rentcast.io",
+      "rateLimitPerMinute": 5,
+      "enabled": true
+    }
+  ]
+}

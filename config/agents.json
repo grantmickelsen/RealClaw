@@ -1,0 +1,86 @@
+{
+  "routingRules": {
+    "singleDispatch": {
+      "schedule_": "calendar",
+      "reschedule_": "calendar",
+      "cancel_event": "calendar",
+      "whats_my_schedule": "calendar",
+      "draft_email": "comms",
+      "send_message": "comms",
+      "reply_to": "comms",
+      "email": "comms",
+      "sms": "comms",
+      "text": "comms",
+      "linkedin": "comms",
+      "letter to": "comms",
+      "who is": "relationship",
+      "lead_status": "relationship",
+      "pipeline": "relationship",
+      "sentiment": "relationship",
+      "sphere": "relationship",
+      "write_listing": "content",
+      "create_post": "content",
+      "listing description": "content",
+      "social post": "content",
+      "neighborhood guide": "content",
+      "campaign email": "content",
+      "just listed": "content",
+      "just sold": "content",
+      "pull_comps": "research",
+      "market stats": "research",
+      "what's the market": "research",
+      "market timing": "research",
+      "property data": "research",
+      "comps for": "research",
+      "transaction": "transaction",
+      "document track": "transaction",
+      "disclosure": "transaction",
+      "escrow": "transaction",
+      "closing": "transaction",
+      "expense": "ops",
+      "mileage": "ops",
+      "preferences": "ops",
+      "plan_open_house": "open_house",
+      "open house": "open_house",
+      "fair housing": "compliance",
+      "wire fraud": "compliance",
+      "disclosure audit": "compliance"
+    },
+    "multiDispatch": {
+      "new_listing": ["content", "research", "comms", "ops", "open_house"],
+      "prep_for_meeting": ["calendar", "relationship", "research", "transaction"],
+      "follow_up_with": ["relationship", "comms"],
+      "market analysis": ["research", "content"]
+    },
+    "chainDispatch": {
+      "find_and_send": {
+        "chain": ["relationship", "research", "content", "comms"],
+        "passFields": {
+          "relationship": ["contactId", "criteria"],
+          "research": ["listings"],
+          "content": ["formattedContent"]
+        },
+        "chainTaskTypes": {
+          "relationship": "follow_up_with",
+          "research": "market_data",
+          "content": "email_campaign_content",
+          "comms": "send_message"
+        }
+      },
+      "open house": {
+        "chain": ["open_house", "calendar", "content"],
+        "chainTaskTypes": {
+          "open_house": "plan_open_house",
+          "calendar": "schedule_event",
+          "content": "social_batch"
+        }
+      }
+    }
+  },
+  "intentClassification": {
+    "tier": "fast",
+    "confidenceThreshold": 0.8,
+    "clarifyOnAmbiguity": true
+  }
+}
+

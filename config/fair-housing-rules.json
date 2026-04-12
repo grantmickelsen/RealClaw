@@ -1,0 +1,26 @@
+{
+  "version": "1.0.0",
+  "rules": [
+    {
+      "id": "fh-custom-001",
+      "description": "Walking distance to religious institutions",
+      "pattern": "walking\\s+distance\\s+to\\s+(church|synagogue|mosque|temple)",
+      "severity": "warning",
+      "suggestion": "Describing proximity to religious institutions may imply religious preference. Use 'near local community centers' instead."
+    },
+    {
+      "id": "fh-custom-002",
+      "description": "Exclusive or private community references",
+      "pattern": "exclusive\\s+(gated\\s+)?(community|enclave|neighborhood)",
+      "severity": "warning",
+      "suggestion": "\"Exclusive\" can imply discriminatory selection criteria. Use \"private gated community\" or \"secure neighborhood\" instead."
+    },
+    {
+      "id": "fh-custom-003",
+      "description": "References to neighborhood character by demographics",
+      "pattern": "(up-and-coming|transitional|gentrifying)\\s+(neighborhood|area|district)",
+      "severity": "warning",
+      "suggestion": "These terms can be interpreted as coded demographic references. Describe specific improvements or amenities instead."
+    }
+  ]
+}

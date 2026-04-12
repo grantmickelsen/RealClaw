@@ -1,0 +1,285 @@
+grant@DESKTOP-R7624MO:~/RealClaw$ sudo docker compose up -d manifest postgres
+WARN[0000] /home/grant/RealClaw/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion 
+[+] Running 4/4
+ ✔ Network realclaw_claw-internal  Created                                                                                                                            0.0s 
+ ✔ Volume realclaw_pgdata          Created                                                                                                                            0.0s 
+ ✔ Container realclaw-postgres-1   Healthy                                                                                                                            5.9s 
+ ✔ Container realclaw-manifest-1   Started                                                                                                                            6.0s 
+grant@DESKTOP-R7624MO:~/RealClaw$ sudo docker compose logs manifest
+WARN[0000] /home/grant/RealClaw/docker-compose.yml: the attribute `version` is obsolete, it will be ignored, please remove it to avoid potential confusion 
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [NestFactory] Starting Nest application...
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] AuthModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] ConfigHostModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] ThrottlerModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] DiscoveryModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] GithubModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] ConfigModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] CacheModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] ServeStaticModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] ScheduleModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] SseModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:14 PM     LOG [InstanceLoader] HealthModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmCoreModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] TypeOrmModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] CommonModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] DatabaseModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] AppModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] ModelDiscoveryModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] NotificationsModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] OtlpModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] PublicStatsModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] RoutingCoreModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] RoutingModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] CustomProviderModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] OAuthModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] ModelPricesModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] AnalyticsModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] ResolveModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [InstanceLoader] ProxyModule dependencies initialized
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] ModelPricesController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/model-prices, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] HealthController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/health, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] OverviewController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/overview, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] TokensController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/tokens, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] CostsController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/costs, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] MessagesController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/messages, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/messages/:id/details, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] AgentsController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agents, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agents, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agents/:agentName/key, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agents/:agentName/rotate-key, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agents/:agentName, PATCH} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agents/:agentName, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] AgentAnalyticsController {/api/v1/agent}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agent/usage, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/agent/costs, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] OtlpDeprecatedController {/}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/otlp/v1/traces, ALL} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/otlp/v1/metrics, ALL} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/otlp/v1/logs, ALL} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] NotificationsController {/api/v1/notifications}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/email-provider, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/email-provider/test, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/email-provider/test-saved, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/email-provider, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/email-provider, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/notification-email, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/notification-email, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/trigger-check, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/logs, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/:id, PATCH} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/notifications/:id, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] ProviderController {/api/v1/routing}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/status, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/providers, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/providers, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/providers/deactivate-all, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/providers/:provider, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] TierController {/api/v1/routing}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers/:tier, PUT} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers/:tier, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers/reset-all, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers/:tier/fallbacks, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers/:tier/fallbacks, PUT} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/tiers/:tier/fallbacks, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] ModelController {/api/v1/routing}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/refresh-models, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/ollama/sync, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/available-models, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] CopilotController {/api/v1/routing}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/copilot/device-code, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/copilot/poll-token, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] ProxyController {/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/v1/chat/completions, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] OpenaiOauthController {/api/v1/oauth/openai}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/oauth/openai/authorize, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/oauth/openai/revoke, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/oauth/openai/callback, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/oauth/openai/done, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] MinimaxOauthController {/api/v1/oauth/minimax}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/oauth/minimax/start, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/oauth/minimax/poll, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] ResolveController {/api/v1/routing}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/resolve, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/subscription-providers, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] CustomProviderController {/api/v1/routing}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/custom-providers, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/custom-providers, POST} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/custom-providers/:id, PUT} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/routing/:agentName/custom-providers/:id, DELETE} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] SseController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/events, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] GithubController {/api/v1}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/github/stars, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RoutesResolver] PublicStatsController {/api/v1/public}:
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/public/usage, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/public/free-models, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [RouterExplorer] Mapped {/api/v1/public/provider-tokens, GET} route
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [PricingSyncService] Refreshing OpenRouter pricing cache...
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [ModelsDevSyncService] Refreshing models.dev cache...
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [PricingSyncService] OpenRouter pricing cache loaded: 348 models
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [ModelsDevSyncService] models.dev cache loaded: 11 providers, 252 models
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM   ERROR [NotificationCronService] Startup catch-up failed: QueryFailedError: relation "notification_rules" does not exist
+manifest-1  | 2026-04-11T21:39:15.323Z DEBUG [Better Auth]: PostgreSQL migration: Using schema 'public' (from search_path)
+manifest-1  | 2026-04-11T21:39:15.344Z DEBUG [Better Auth]: Found 0 table(s) in schema 'public': (none)
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [ModelPricingCacheService] Overlaid 247 models.dev pricing entries
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [ModelPricingCacheService] Loaded 707 pricing entries
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM    WARN [ProviderModelRegistryService] Failed to load provider model registry from cache: QueryFailedError: relation "user_providers" does not exist
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [NestApplication] Nest application successfully started
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:15 PM     LOG [Bootstrap] Server running on http://0.0.0.0:3001
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:17 PM    WARN [ApiKeyGuard] Rejected request without API key from 172.18.0.1
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:17 PM    WARN [HttpErrors] 401 GET /api/v1/events 15ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | 2026-04-11T21:39:18.957Z WARN [Better Auth]: Rate limiting skipped: could not determine client IP address. If you're behind a reverse proxy, make sure to configure `trustedProxies` in your auth config.
+manifest-1  | 2026-04-11T21:39:23.606Z ERROR [Better Auth]: Provider not found. Make sure to add the provider in your auth config { provider: 'google' }
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:23 PM    WARN [HttpErrors] 404 POST /api/auth/sign-in/social 7ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | 2026-04-11T21:39:34.801Z ERROR [Better Auth]: User not found { email: 'mickelsengrant@gmail.com' }
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:34 PM    WARN [HttpErrors] 401 POST /api/auth/sign-in/email 194ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | 2026-04-11T21:39:44.082Z ERROR [Better Auth]: Provider not found. Make sure to add the provider in your auth config { provider: 'github' }
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:44 PM    WARN [HttpErrors] 404 POST /api/auth/sign-in/social 5ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | 2026-04-11T21:39:44.947Z ERROR [Better Auth]: Provider not found. Make sure to add the provider in your auth config { provider: 'google' }
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:44 PM    WARN [HttpErrors] 404 POST /api/auth/sign-in/social 4ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | 2026-04-11T21:39:45.143Z ERROR [Better Auth]: Provider not found. Make sure to add the provider in your auth config { provider: 'google' }
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:39:45 PM    WARN [HttpErrors] 404 POST /api/auth/sign-in/social 4ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:40:05 PM   ERROR [ExceptionsHandler] QueryFailedError: relation "tenants" does not exist
+manifest-1  |     at PostgresQueryRunner.query (/app/node_modules/typeorm/driver/postgres/PostgresQueryRunner.js:216:19)
+manifest-1  |     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+manifest-1  |     at async SelectQueryBuilder.loadRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2231:25)
+manifest-1  |     at async SelectQueryBuilder.executeEntitiesAndRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2079:26)
+manifest-1  |     at async SelectQueryBuilder.getRawAndEntities (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:684:29)
+manifest-1  |     at async SelectQueryBuilder.getOne (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:711:25)
+manifest-1  |     at async TenantCacheService.resolve (/app/packages/backend/dist/common/services/tenant-cache.service.js:35:24)
+manifest-1  |     at async AgentsController.getAgents (/app/packages/backend/dist/analytics/controllers/agents.controller.js:50:27) {
+manifest-1  |   query: 'SELECT "Tenant"."id" AS "Tenant_id", "Tenant"."name" AS "Tenant_name", "Tenant"."organization_name" AS "Tenant_organization_name", "Tenant"."email" AS "Tenant_email", "Tenant"."is_active" AS "Tenant_is_active", "Tenant"."created_at" AS "Tenant_created_at", "Tenant"."updated_at" AS "Tenant_updated_at" FROM "tenants" "Tenant" WHERE (("Tenant"."name" = $1)) LIMIT 1',
+manifest-1  |   parameters: [
+manifest-1  |     'j59Jj9FYUwwoCHIliCtQP747sFrAd29C'
+manifest-1  |   ],
+manifest-1  |   driverError: error: relation "tenants" does not exist
+manifest-1  |       at /app/node_modules/pg/lib/client.js:631:17
+manifest-1  |       at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+manifest-1  |       at async PostgresQueryRunner.query (/app/node_modules/typeorm/driver/postgres/PostgresQueryRunner.js:181:25)
+manifest-1  |       at async SelectQueryBuilder.loadRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2231:25)
+manifest-1  |       at async SelectQueryBuilder.executeEntitiesAndRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2079:26)
+manifest-1  |       at async SelectQueryBuilder.getRawAndEntities (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:684:29)
+manifest-1  |       at async SelectQueryBuilder.getOne (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:711:25)
+manifest-1  |       at async TenantCacheService.resolve (/app/packages/backend/dist/common/services/tenant-cache.service.js:35:24)
+manifest-1  |       at async AgentsController.getAgents (/app/packages/backend/dist/analytics/controllers/agents.controller.js:50:27) {
+manifest-1  |     length: 107,
+manifest-1  |     severity: 'ERROR',
+manifest-1  |     code: '42P01',
+manifest-1  |     detail: undefined,
+manifest-1  |     hint: undefined,
+manifest-1  |     position: '308',
+manifest-1  |     internalPosition: undefined,
+manifest-1  |     internalQuery: undefined,
+manifest-1  |     where: undefined,
+manifest-1  |     schema: undefined,
+manifest-1  |     table: undefined,
+manifest-1  |     column: undefined,
+manifest-1  |     dataType: undefined,
+manifest-1  |     constraint: undefined,
+manifest-1  |     file: 'parse_relation.c',
+manifest-1  |     line: '1449',
+manifest-1  |     routine: 'parserOpenTable'
+manifest-1  |   },
+manifest-1  |   length: 107,
+manifest-1  |   severity: 'ERROR',
+manifest-1  |   code: '42P01',
+manifest-1  |   detail: undefined,
+manifest-1  |   hint: undefined,
+manifest-1  |   position: '308',
+manifest-1  |   internalPosition: undefined,
+manifest-1  |   internalQuery: undefined,
+manifest-1  |   where: undefined,
+manifest-1  |   schema: undefined,
+manifest-1  |   table: undefined,
+manifest-1  |   column: undefined,
+manifest-1  |   dataType: undefined,
+manifest-1  |   constraint: undefined,
+manifest-1  |   file: 'parse_relation.c',
+manifest-1  |   line: '1449',
+manifest-1  |   routine: 'parserOpenTable'
+manifest-1  | }
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:40:05 PM    WARN [HttpErrors] 500 GET /api/v1/agents 45ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:40:11 PM   ERROR [ExceptionsHandler] QueryFailedError: relation "tenants" does not exist
+manifest-1  |     at PostgresQueryRunner.query (/app/node_modules/typeorm/driver/postgres/PostgresQueryRunner.js:216:19)
+manifest-1  |     at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+manifest-1  |     at async SelectQueryBuilder.loadRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2231:25)
+manifest-1  |     at async SelectQueryBuilder.executeEntitiesAndRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2079:26)
+manifest-1  |     at async SelectQueryBuilder.getRawAndEntities (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:684:29)
+manifest-1  |     at async SelectQueryBuilder.getOne (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:711:25)
+manifest-1  |     at async ApiKeyGeneratorService.onboardAgent (/app/packages/backend/dist/otlp/services/api-key.service.js:43:26)
+manifest-1  |     at async AgentsController.createAgent (/app/packages/backend/dist/analytics/controllers/agents.controller.js:62:22)
+manifest-1  |     at async /app/node_modules/@nestjs/core/router/router-execution-context.js:46:28
+manifest-1  |     at async /app/node_modules/@nestjs/core/router/router-proxy.js:9:17 {
+manifest-1  |   query: 'SELECT "Tenant"."id" AS "Tenant_id", "Tenant"."name" AS "Tenant_name", "Tenant"."organization_name" AS "Tenant_organization_name", "Tenant"."email" AS "Tenant_email", "Tenant"."is_active" AS "Tenant_is_active", "Tenant"."created_at" AS "Tenant_created_at", "Tenant"."updated_at" AS "Tenant_updated_at" FROM "tenants" "Tenant" WHERE (("Tenant"."name" = $1)) LIMIT 1',
+manifest-1  |   parameters: [
+manifest-1  | [Manifest] 1  - 04/11/2026, 9:40:11 PM    WARN [HttpErrors] 500 POST /api/v1/agents 21ms ip=172.18.0.1 ua=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36
+manifest-1  |     'j59Jj9FYUwwoCHIliCtQP747sFrAd29C'
+manifest-1  |   ],
+manifest-1  |   driverError: error: relation "tenants" does not exist
+manifest-1  |       at /app/node_modules/pg/lib/client.js:631:17
+manifest-1  |       at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+manifest-1  |       at async PostgresQueryRunner.query (/app/node_modules/typeorm/driver/postgres/PostgresQueryRunner.js:181:25)
+manifest-1  |       at async SelectQueryBuilder.loadRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2231:25)
+manifest-1  |       at async SelectQueryBuilder.executeEntitiesAndRawResults (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:2079:26)
+manifest-1  |       at async SelectQueryBuilder.getRawAndEntities (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:684:29)
+manifest-1  |       at async SelectQueryBuilder.getOne (/app/node_modules/typeorm/query-builder/SelectQueryBuilder.js:711:25)
+manifest-1  |       at async ApiKeyGeneratorService.onboardAgent (/app/packages/backend/dist/otlp/services/api-key.service.js:43:26)
+manifest-1  |       at async AgentsController.createAgent (/app/packages/backend/dist/analytics/controllers/agents.controller.js:62:22)
+manifest-1  |       at async /app/node_modules/@nestjs/core/router/router-execution-context.js:46:28 {
+manifest-1  |     length: 107,
+manifest-1  |     severity: 'ERROR',
+manifest-1  |     code: '42P01',
+manifest-1  |     detail: undefined,
+manifest-1  |     hint: undefined,
+manifest-1  |     position: '308',
+manifest-1  |     internalPosition: undefined,
+manifest-1  |     internalQuery: undefined,
+manifest-1  |     where: undefined,
+manifest-1  |     schema: undefined,
+manifest-1  |     table: undefined,
+manifest-1  |     column: undefined,
+manifest-1  |     dataType: undefined,
+manifest-1  |     constraint: undefined,
+manifest-1  |     file: 'parse_relation.c',
+manifest-1  |     line: '1449',
+manifest-1  |     routine: 'parserOpenTable'
+manifest-1  |   },
+manifest-1  |   length: 107,
+manifest-1  |   severity: 'ERROR',
+manifest-1  |   code: '42P01',
+manifest-1  |   detail: undefined,
+manifest-1  |   hint: undefined,
+manifest-1  |   position: '308',
+manifest-1  |   internalPosition: undefined,
+manifest-1  |   internalQuery: undefined,
+manifest-1  |   where: undefined,
+manifest-1  |   schema: undefined,
+manifest-1  |   table: undefined,
+manifest-1  |   column: undefined,
+manifest-1  |   dataType: undefined,
+manifest-1  |   constraint: undefined,
+manifest-1  |   file: 'parse_relation.c',
+manifest-1  |   line: '1449',
+manifest-1  |   routine: 'parserOpenTable'
+manifest-1  | }

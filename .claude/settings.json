@@ -1,0 +1,12 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npx tsc:*)",
+      "Bash(sudo docker:*)",
+      "Bash(docker compose:*)",
+      "Bash(npm run:*)",
+      "Bash(ls -la /home/grant/RealClaw/node_modules/.bin/tsx*)",
+      "Bash(which npm:*)"
+    ]
+  }
+}

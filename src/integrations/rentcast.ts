@@ -1,0 +1,195 @@
+import { BaseIntegration } from './base-integration.js';
+import type { IntegrationStatus, NormalizedListing } from '../types/integrations.js';
+import { IntegrationId } from '../types/integrations.js';
+import type { MlsProvider, MlsCompsQuery, MarketStats } from './mls-provider.js';
+
+// ─── RentCast API response shapes ───
+
+interface RentCastListing {
+  id?: string;
+  formattedAddress?: string;
+  addressLine1?: string;
+  city?: string;
+  zipCode?: string;
+  state?: string;
+  bedrooms?: number;
+  bathrooms?: number;
+  squareFootage?: number;
+  lotSize?: number;
+  yearBuilt?: number;
+  price?: number;
+  listingType?: string;
+  listingStatus?: string;
+  listedDate?: string;
+  removedDate?: string;
+  daysOnMarket?: number;
+  propertyType?: string;
+  description?: string;
+  photos?: string[];
+}
+
+interface RentCastMarket {
+  zipCode?: string;
+  averageSalePrice?: number;
+  medianSalePrice?: number;
+  averageDaysOnMarket?: number;
+  medianDaysOnMarket?: number;
+  totalListings?: number;
+  averageSalePricePerSquareFoot?: number;
+  saleToListRatio?: number;
+}
+
+export class RentCastIntegration extends BaseIntegration implements MlsProvider {
+  // ─── MlsProvider interface ───
+
+  async searchComps(query: MlsCompsQuery): Promise<NormalizedListing[]> {
+    const { address, radiusMiles = 1, daysBack = 180, minBeds, maxBeds } = query;
+
+    const params = new URLSearchParams({
+      address,
+      radius: String(radiusMiles),
+      daysOld: String(daysBack),
+      limit: '25',
+      status: 'Sold',
+      ...(minBeds !== undefined ? { bedrooms: String(minBeds) } : {}),
+      ...(maxBeds !== undefined ? { bedroomsMax: String(maxBeds) } : {}),
+    });
+
+    const data = await this.authenticatedRequest(
+      'GET',
+      `/v1/listings/sale?${params}`,
+    ) as RentCastListing[];
+
+    return (Array.isArray(data) ? data : []).map(l => this.normalizeListing(l, 'sold'));
+  }
+
+  async getMarketStats(zipCode: string): Promise<MarketStats> {
+    const params = new URLSearchParams({ zipCode, historyRange: '3' });
+    const data = await this.authenticatedRequest(
+      'GET',
+      `/v1/markets?${params}`,
+    ) as RentCastMarket;
+
+    // Fetch active listing count separately
+    const activeParams = new URLSearchParams({ zipCode, status: 'Active', limit: '1' });
+    let activeListings = 0;
+    let pendingListings = 0;
+    let newListings = 0;
+    try {
+      const activeData = await this.authenticatedRequest(
+        'GET',
+        `/v1/listings/sale?${activeParams}`,
+      ) as RentCastListing[];
+      activeListings = Array.isArray(activeData) ? activeData.length : 0;
+
+      const pendingParams = new URLSearchParams({ zipCode, status: 'Pending', limit: '1' });
+      const pendingData = await this.authenticatedRequest(
+        'GET',
+        `/v1/listings/sale?${pendingParams}`,
+      ) as RentCastListing[];
+      pendingListings = Array.isArray(pendingData) ? pendingData.length : 0;
+
+      const sevenDaysAgo = new Date(Date.now() - 7 * 86_400_000).toISOString().slice(0, 10);
+      const newParams = new URLSearchParams({ zipCode, status: 'Active', listedAfter: sevenDaysAgo, limit: '50' });
+      const newData = await this.authenticatedRequest(
+        'GET',
+        `/v1/listings/sale?${newParams}`,
+      ) as RentCastListing[];
+      newListings = Array.isArray(newData) ? newData.length : 0;
+    } catch {
+      // supplemental counts failed — use 0, main stats still valid
+    }
+
+    const medianPrice = data.medianSalePrice ?? data.averageSalePrice ?? 0;
+    const avgDom = data.medianDaysOnMarket ?? data.averageDaysOnMarket ?? 0;
+
+    return {
+      zipCode,
+      medianSalePrice: medianPrice,
+      avgDaysOnMarket: avgDom,
+      activeListings,
+      pendingListings,
+      soldLast30Days: data.totalListings ?? 0,
+      newListingsLast7Days: newListings,
+      priceDirection: this.inferPriceDirection(data),
+      asOf: new Date().toISOString(),
+    };
+  }
+
+  async getActiveListings(zipCode: string, maxResults = 20): Promise<NormalizedListing[]> {
+    const params = new URLSearchParams({
+      zipCode,
+      status: 'Active',
+      limit: String(maxResults),
+    });
+
+    const data = await this.authenticatedRequest(
+      'GET',
+      `/v1/listings/sale?${params}`,
+    ) as RentCastListing[];
+
+    return (Array.isArray(data) ? data : []).map(l => this.normalizeListing(l, 'active'));
+  }
+
+  /** Implements BaseIntegration abstract method — returns IntegrationStatus */
+  async healthCheck(): Promise<IntegrationStatus> {
+    const key = await this.vault.retrieve(IntegrationId.RENTCAST, 'api_key');
+    if (!key) return this.notConfigured();
+    try {
+      const params = new URLSearchParams({ zipCode: '90210', limit: '1' });
+      await this.authenticatedRequest('GET', `/v1/listings/sale?${params}`);
+      return this.connected();
+    } catch {
+      return { ...this.notConfigured(), status: 'disconnected' };
+    }
+  }
+
+
+  // ─── Overrides ───
+
+  /** RentCast uses X-Api-Key header instead of Authorization: Bearer */
+  protected override async buildAuthHeaders(): Promise<Record<string, string>> {
+    const key = await this.vault.retrieve(IntegrationId.RENTCAST, 'api_key');
+    if (!key) {
+      const { IntegrationError } = await import('../utils/errors.js');
+      throw new IntegrationError(IntegrationId.RENTCAST, 'No API key stored', 401, false);
+    }
+    return { 'X-Api-Key': key };
+  }
+
+  // ─── Private helpers ───
+
+  private normalizeListing(l: RentCastListing, status: 'active' | 'pending' | 'sold'): NormalizedListing {
+    const mlsStatus = status === 'sold' ? 'sold' : status === 'pending' ? 'pending' : 'active';
+    return {
+      mlsNumber: l.id ?? '',
+      address: l.formattedAddress ?? l.addressLine1 ?? '',
+      city: l.city ?? '',
+      zip: l.zipCode ?? '',
+      price: l.price ?? 0,
+      status: mlsStatus as NormalizedListing['status'],
+      beds: l.bedrooms ?? 0,
+      baths: l.bathrooms ?? 0,
+      sqft: l.squareFootage ?? 0,
+      lotSqft: l.lotSize ?? 0,
+      yearBuilt: l.yearBuilt ?? 0,
+      dom: l.daysOnMarket ?? 0,
+      description: l.description ?? '',
+      features: [],
+      photos: l.photos ?? [],
+      listingAgent: { name: '', phone: '', email: '' },
+      listingDate: l.listedDate ?? '',
+      soldDate: l.removedDate ?? null,
+      soldPrice: status === 'sold' ? (l.price ?? null) : null,
+    };
+  }
+
+  private inferPriceDirection(data: RentCastMarket): 'up' | 'flat' | 'down' {
+    // RentCast market endpoint doesn't provide trend directly;
+    // use sale-to-list ratio as a proxy: >1 = up, <0.97 = down
+    const ratio = data.saleToListRatio ?? 1;
+    if (ratio > 1.01) return 'up';
+    if (ratio < 0.97) return 'down';
+    return 'flat';
+  }
+}
