@@ -6,7 +6,31 @@
       "Bash(docker compose:*)",
       "Bash(npm run:*)",
       "Bash(ls -la /home/grant/RealClaw/node_modules/.bin/tsx*)",
-      "Bash(which npm:*)"
+      "Bash(which npm:*)",
+      "Bash(node -e 'import\\('\\\\''pg'\\\\''\\).then\\(\\(\\) => console.log\\('\\\\''pg ok'\\\\''\\)\\).catch\\(e => console.error\\(e.message\\)\\)')",
+      "Bash(npx vitest:*)",
+      "Bash(npx --version)",
+      "Bash(bash -c \"npx vitest run 2>&1\")",
+      "Bash(node_modules/.bin/vitest run:*)",
+      "Read(//usr/local/bin/**)",
+      "Read(//usr/bin/**)",
+      "Read(//usr/local/**)",
+      "Bash(export PATH=\"/home/grant/.nvm/versions/node/v22.12.0/bin:$PATH\")",
+      "Bash(node -e \"const {SignOptions} = require\\('@types/jsonwebtoken'\\)\")",
+      "Bash(npm --version)",
+      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/npm install:*)",
+      "Bash(node -e \"require\\('ws'\\); require\\('ioredis'\\); console.log\\('deps OK'\\)\")",
+      "Bash(/bin/bash -c \"npm install bullmq expo-server-sdk 2>&1 | tail -8\")",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/npm install:*)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node ~/.nvm/versions/node/v22.12.0/bin/npm install bullmq expo-server-sdk)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node ~/.nvm/versions/node/v22.12.0/bin/npm run build)",
+      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/npx tsc:*)",
+      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/node /home/grant/.nvm/versions/node/v22.12.0/bin/tsc --noEmit)",
+      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/node /home/grant/RealClaw/node_modules/.bin/tsc --noEmit)",
+      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/node /home/grant/RealClaw/node_modules/.bin/vitest run)"
+    ],
+    "additionalDirectories": [
+      "/home/grant/.claude/plans"
     ]
   }
 }

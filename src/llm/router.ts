@@ -1,14 +1,24 @@
 import type { AgentId } from '../types/agents.js';
 import type { LlmRequest, LlmResponse, ModelRoutingConfig, LlmProviderId } from './types.js';
 import { LlmProvider, LlmProviderError } from './provider.js';
+import type { ICancellationStore } from '../gateway/cancellation-store.js';
+import { TaskCancelledError } from '../utils/errors.js';
 
 export class LlmRouter {
   constructor(
     private readonly config: ModelRoutingConfig,
     private readonly providers: Map<LlmProviderId, LlmProvider>,
+    private readonly cancellationStore?: ICancellationStore,
   ) {}
 
   async complete(request: LlmRequest, agentId?: AgentId): Promise<LlmResponse> {
+    // Pre-flight cancellation check — skips the provider call if already cancelled
+    if (request.correlationId && this.cancellationStore) {
+      if (await this.cancellationStore.isCancelled(request.correlationId)) {
+        throw new TaskCancelledError(request.correlationId);
+      }
+    }
+
     const resolved = this.resolve(request, agentId);
 
     const primaryProvider = this.providers.get(resolved.provider);

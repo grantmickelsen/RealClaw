@@ -14,7 +14,7 @@ import type { EventType } from '../types/events.js';
 import type { LlmRouter } from '../llm/router.js';
 import type { LlmRequest, LlmResponse } from '../llm/types.js';
 import { MemoryManager } from '../memory/memory-manager.js';
-import type { EventBus } from './ops/event-bus.js';
+import type { IEventBus } from './ops/event-bus.js';
 import type { AuditLogger } from '../middleware/audit-logger.js';
 import type { AuditEntry } from '../types/messages.js';
 import type { IntegrationManager } from '../integrations/integration-manager.js';
@@ -24,9 +24,10 @@ import type { IntegrationId } from '../types/integrations.js';
 export abstract class BaseAgent {
   readonly id: AgentId;
   readonly config: AgentConfig;
+  protected readonly tenantId: string;
   protected readonly memory: MemoryManager;
   protected readonly llmRouter: LlmRouter;
-  protected readonly eventBus: EventBus;
+  protected readonly eventBus: IEventBus;
   protected readonly auditLogger: AuditLogger;
   private soulPrompt = '';
 
@@ -38,8 +39,9 @@ export abstract class BaseAgent {
     config: AgentConfig,
     llmRouter: LlmRouter,
     memory: MemoryManager,
-    eventBus: EventBus,
+    eventBus: IEventBus,
     auditLogger: AuditLogger,
+    tenantId: string = 'default',
   ) {
     this.id = config.id;
     this.config = config;
@@ -47,6 +49,7 @@ export abstract class BaseAgent {
     this.memory = memory;
     this.eventBus = eventBus;
     this.auditLogger = auditLogger;
+    this.tenantId = tenantId;
   }
 
   setAgentRegistry(registry: Map<AgentId, BaseAgent>): void {

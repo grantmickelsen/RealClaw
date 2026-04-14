@@ -9,12 +9,19 @@ import { OpenRouterProvider } from './providers/openrouter.js';
 import { OllamaProvider } from './providers/ollama.js';
 import { GoogleProvider } from './providers/google.js';
 import { ManifestProvider } from './providers/manifest.js';
+import type { ICancellationStore } from '../gateway/cancellation-store.js';
 
 /**
  * Load config/models.json and instantiate all enabled providers.
  * Returns a ready LlmRouter.
+ *
+ * @param cancellationStore  Optional — if provided, the router will check for
+ *                           cancellation before each provider call.
  */
-export async function createLlmRouter(configPath: string): Promise<LlmRouter> {
+export async function createLlmRouter(
+  configPath: string,
+  cancellationStore?: ICancellationStore,
+): Promise<LlmRouter> {
   const raw = await fs.readFile(configPath, 'utf-8');
   const config = JSON.parse(raw) as ModelRoutingConfig;
 
@@ -34,7 +41,7 @@ export async function createLlmRouter(configPath: string): Promise<LlmRouter> {
     throw new Error('No LLM providers enabled in config/models.json');
   }
 
-  return new LlmRouter(config, providers);
+  return new LlmRouter(config, providers, cancellationStore);
 }
 
 function buildProvider(config: ProviderConfig): LlmProvider | null {

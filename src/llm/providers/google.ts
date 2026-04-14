@@ -59,6 +59,9 @@ export class GoogleProvider extends LlmProvider {
       ? calculateCost(modelConfig.pricing, inputTokens, outputTokens)
       : 0;
 
+    // Graceful degradation: emit full text as a single synthetic token
+    if (request.onToken && text) request.onToken(text);
+
     return {
       text,
       inputTokens,

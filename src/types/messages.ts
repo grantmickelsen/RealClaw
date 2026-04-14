@@ -190,6 +190,7 @@ export interface ApprovalDecision {
 
 export interface HeartbeatTrigger extends BaseMessage {
   type: 'HEARTBEAT_TRIGGER';
+  tenantId?: string;
   triggerName: string;
   targetAgents: AgentId[] | 'all';
   parameters: Record<string, unknown>;
@@ -213,6 +214,7 @@ export interface AgentError extends BaseMessage {
 export interface AuditEntry {
   logId: string;
   timestamp: string;
+  tenantId?: string;
   agent: AgentId;
   actionType: string;
   description: string;
@@ -237,6 +239,7 @@ export interface OutboundMessage {
   platform: 'slack' | 'discord' | 'whatsapp' | 'imessage' | 'signal' | 'sms';
   channelId: string;
   text: string;
+  correlationId?: string;       // Threaded through to WS push in TenantRegistry callback
   approvalRequest?: ApprovalRequest;
 }
 

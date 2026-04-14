@@ -19,6 +19,8 @@ interface ApprovalConfig {
   };
 }
 
+type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
+
 export class ApprovalManager {
   private readonly pending = new Map<string, ApprovalRequest>();
   private readonly storeFile: string;
@@ -26,13 +28,19 @@ export class ApprovalManager {
   private readonly reminderTimers = new Map<string, NodeJS.Timeout>();
   private readonly expiryTimers = new Map<string, NodeJS.Timeout>();
   private onApprovalExecute?: (request: ApprovalRequest, response: ApprovalResponse) => Promise<void>;
+  private readonly tenantId: string;
+  private readonly queryFn?: QueryFn;
 
   constructor(
+    tenantId: string = 'default',
     memoryPath: string = process.env.CLAW_MEMORY_PATH ?? '/opt/claw/memory',
     config: ApprovalConfig = { batchThreshold: 3, approvalTimeout: { reminderAfterMs: 14_400_000, expireAfterMs: 86_400_000 } },
+    queryFn?: QueryFn,
   ) {
+    this.tenantId = tenantId;
     this.storeFile = path.join(memoryPath, 'system', 'pending-approvals.json');
     this.config = config;
+    this.queryFn = queryFn;
   }
 
   onExecute(callback: (request: ApprovalRequest, response: ApprovalResponse) => Promise<void>): void {
@@ -80,6 +88,14 @@ export class ApprovalManager {
       await this.onApprovalExecute(request, response);
     }
 
+    // Mark as completed in DB if available
+    if (this.queryFn) {
+      await this.queryFn(
+        `UPDATE approvals SET status = 'completed' WHERE approval_id = $1`,
+        [response.approvalId],
+      ).catch(err => console.error('[Approval] DB update failed:', err));
+    }
+
     await this.persistPending();
   }
 
@@ -96,6 +112,11 @@ export class ApprovalManager {
   }
 
   async loadFromDisk(): Promise<void> {
+    if (this.queryFn) {
+      await this.loadFromDb();
+      return;
+    }
+
     try {
       const raw = await fs.readFile(this.storeFile, 'utf-8');
       const stored = JSON.parse(raw) as PendingApprovals;
@@ -112,13 +133,56 @@ export class ApprovalManager {
     }
   }
 
+  private async loadFromDb(): Promise<void> {
+    if (!this.queryFn) return;
+    try {
+      const result = await this.queryFn(
+        `SELECT approval_id, items, expires_at FROM approvals
+         WHERE tenant_id = $1 AND status = 'pending' AND expires_at > NOW()`,
+        [this.tenantId],
+      );
+      for (const row of result.rows) {
+        const request: ApprovalRequest = {
+          type: 'APPROVAL_REQUEST',
+          messageId: uuidv4(),
+          timestamp: new Date().toISOString(),
+          correlationId: uuidv4(),
+          approvalId: row['approval_id'] as string,
+          batch: row['items'] as ApprovalItem[],
+          expiresAt: row['expires_at'] as string,
+        };
+        this.pending.set(request.approvalId, request);
+        this.scheduleTimers(request);
+      }
+    } catch (err) {
+      console.error('[Approval] DB load failed, starting fresh:', err);
+    }
+  }
+
   private async persistPending(): Promise<void> {
+    if (this.queryFn) {
+      await this.persistToDb();
+      return;
+    }
+
     const stored: PendingApprovals = {};
     for (const [id, request] of this.pending) {
       stored[id] = request;
     }
     await fs.mkdir(path.dirname(this.storeFile), { recursive: true });
     await fs.writeFile(this.storeFile, JSON.stringify(stored, null, 2), 'utf-8');
+  }
+
+  private async persistToDb(): Promise<void> {
+    if (!this.queryFn) return;
+    for (const [approvalId, request] of this.pending) {
+      await this.queryFn(
+        `INSERT INTO approvals (approval_id, tenant_id, items, status, expires_at)
+         VALUES ($1, $2, $3::jsonb, 'pending', $4)
+         ON CONFLICT (approval_id) DO UPDATE SET items = $3::jsonb, status = 'pending'`,
+        [approvalId, this.tenantId, JSON.stringify(request.batch), request.expiresAt],
+      ).catch(err => console.error('[Approval] DB persist failed:', err));
+    }
   }
 
   private scheduleTimers(request: ApprovalRequest): void {
@@ -133,11 +197,12 @@ export class ApprovalManager {
       this.reminderTimers.set(request.approvalId, reminderTimer);
     }
 
+    const timeUntilExpiry = Math.max(0, expiresMs - now);
     const expiryTimer = setTimeout(() => {
       console.log(`[Approval] Expired: approval ${request.approvalId}`);
       this.cleanup(request.approvalId);
       this.persistPending().catch(() => {});
-    }, expiresMs - now);
+    }, timeUntilExpiry);
     this.expiryTimers.set(request.approvalId, expiryTimer);
   }
 

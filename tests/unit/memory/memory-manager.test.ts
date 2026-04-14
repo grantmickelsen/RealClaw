@@ -110,19 +110,15 @@ describe('MemoryManager', () => {
     it('prevents concurrent writes to the same file', async () => {
       await manager.write({ path: 'locked.md', operation: 'create', content: 'initial', writtenBy: AgentId.OPS });
 
-      // Simulate holding a lock by acquiring it manually via private method
-      // We'll just verify that the lock auto-releases
-      const lock = manager.getLock('locked.md');
-      expect(lock).toBeUndefined(); // No lock after write completes
+      // No lock should be held after write completes (released in finally block)
+      expect(manager.isLocked('locked.md')).toBe(false);
     });
 
-    it('lock auto-releases after TTL', async () => {
-      vi.useFakeTimers();
+    it('lock is released after write completes', async () => {
       await manager.write({ path: 'release.md', operation: 'create', content: 'x', writtenBy: AgentId.OPS });
 
       // After write, lock should be gone
-      expect(manager.getLock('release.md')).toBeUndefined();
-      vi.useRealTimers();
+      expect(manager.isLocked('release.md')).toBe(false);
     });
   });
 });

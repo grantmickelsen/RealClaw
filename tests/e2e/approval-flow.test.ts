@@ -11,7 +11,7 @@ let approvalManager: ApprovalManager;
 
 beforeEach(async () => {
   tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'claw-approval-test-'));
-  approvalManager = new ApprovalManager(tmpDir, {
+  approvalManager = new ApprovalManager('default', tmpDir, {
     batchThreshold: 3,
     approvalTimeout: { reminderAfterMs: 100, expireAfterMs: 200 },
   });

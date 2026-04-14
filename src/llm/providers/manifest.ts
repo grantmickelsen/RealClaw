@@ -1,5 +1,6 @@
 import { LlmProvider, LlmProviderError } from '../provider.js';
 import { calculateCost } from '../cost-calculator.js';
+import { readSseLines } from '../sse-reader.js';
 import type { LlmRequest, LlmResponse, LlmToolCall, ProviderConfig } from '../types.js';
 import { LlmProviderId } from '../types.js';
 
@@ -29,6 +30,8 @@ export class ManifestProvider extends LlmProvider {
   }
 
   async complete(request: LlmRequest, _modelString: string): Promise<LlmResponse> {
+    if (request.onToken) return this.completeStreaming(request);
+
     const apiKey = this.getApiKey();
     const startMs = Date.now();
 
@@ -136,6 +139,84 @@ export class ManifestProvider extends LlmProvider {
     return ['auto'];
   }
 
+  // ─── Streaming ─────────────────────────────────────────────────────────────
+
+  private async completeStreaming(request: LlmRequest): Promise<LlmResponse> {
+    const apiKey = this.getApiKey();
+    const startMs = Date.now();
+    const body = {
+      ...this.buildBody(request),
+      stream: true,
+      stream_options: { include_usage: true },
+    };
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: request.signal,
+      });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err;
+      throw new LlmProviderError(LlmProviderId.MANIFEST, null, true, `Manifest unreachable at ${this.baseUrl}: ${(err as Error).message}`);
+    }
+
+    if (!response.ok) {
+      const retryable = response.status === 429 || response.status >= 500;
+      throw new LlmProviderError(LlmProviderId.MANIFEST, response.status, retryable, `Manifest error: ${response.status} ${await response.text()}`);
+    }
+
+    // Routing metadata is available in response headers immediately (before body streams)
+    const routingMeta = extractRoutingMeta(response.headers);
+
+    let text = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for await (const line of readSseLines(response, request.signal)) {
+      if (line === '[DONE]') break;
+      try {
+        const chunk = JSON.parse(line) as ManifestSseChunk;
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          text += delta;
+          request.onToken!(delta);
+        }
+        if (chunk.usage) {
+          inputTokens = chunk.usage.prompt_tokens ?? 0;
+          outputTokens = chunk.usage.completion_tokens ?? 0;
+        }
+      } catch { /* skip malformed SSE lines */ }
+    }
+
+    const latencyMs = Date.now() - startMs;
+    const actualModel = routingMeta.model ?? 'auto';
+    const modelConfig = this.config.models.find(m => m.modelString === actualModel);
+    return {
+      text,
+      toolCalls: undefined,
+      inputTokens,
+      outputTokens,
+      model: actualModel,
+      provider: LlmProviderId.MANIFEST,
+      latencyMs,
+      estimatedCostUsd: modelConfig ? calculateCost(modelConfig.pricing, inputTokens, outputTokens) : 0,
+      manifestMeta: routingMeta.tier ? {
+        tier: routingMeta.tier,
+        model: routingMeta.model,
+        provider: routingMeta.provider,
+        confidence: routingMeta.confidence,
+        reason: routingMeta.reason,
+        fallbackFrom: routingMeta.fallbackFrom,
+      } : undefined,
+    };
+  }
+
   /**
    * Build an OpenAI-compatible request body with model="auto".
    * Manifest strips the system prompt from scoring (to avoid inflating the tier)
@@ -232,4 +313,11 @@ interface ManifestResponse {
     total_tokens: number;
   };
   model: string;
+}
+
+// ─── Streaming SSE Chunk Type ─────────────────────────────────────────────────
+
+interface ManifestSseChunk {
+  choices?: Array<{ delta?: { content?: string | null } }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }

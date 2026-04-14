@@ -34,6 +34,10 @@ export interface LlmRequest {
   maxOutputTokens?: number;    // Default 4096
   stopSequences?: string[];
   tools?: LlmToolDefinition[]; // For function calling
+  // ─── Phase 2: Streaming + Cancellation ───────────────────────────────────
+  onToken?: (token: string) => void; // If set, provider uses SSE streaming
+  signal?: AbortSignal;              // AbortController signal — passed to fetch()
+  correlationId?: string;            // For pre-flight cancellation check in LlmRouter
 }
 
 export interface LlmMessage {

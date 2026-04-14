@@ -15,19 +15,23 @@ export interface AuditQueryFilters {
 export class AuditLogger {
   private readonly logDir: string;
   private readonly timezone: string;
+  private readonly tenantId: string | undefined;
 
   constructor(
     logDir: string = path.join(process.env.CLAW_MEMORY_PATH ?? '/opt/claw/memory', 'system'),
     timezone = 'America/Los_Angeles',
+    tenantId?: string,
   ) {
     this.logDir = logDir;
     this.timezone = timezone;
+    this.tenantId = tenantId;
   }
 
   async log(entry: AuditEntry): Promise<void> {
     const filePath = this.logFilePath();
     await fs.mkdir(path.dirname(filePath), { recursive: true });
-    const line = JSON.stringify(entry) + '\n';
+    const enriched: AuditEntry = this.tenantId ? { ...entry, tenantId: this.tenantId } : entry;
+    const line = JSON.stringify(enriched) + '\n';
     await fs.appendFile(filePath, line, 'utf-8');
   }
 

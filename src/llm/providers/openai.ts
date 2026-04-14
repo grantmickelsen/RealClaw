@@ -1,5 +1,6 @@
 import { LlmProvider, LlmProviderError } from '../provider.js';
 import { calculateCost } from '../cost-calculator.js';
+import { readSseLines } from '../sse-reader.js';
 import type { LlmRequest, LlmResponse, LlmToolCall, ProviderConfig } from '../types.js';
 import { LlmProviderId } from '../types.js';
 
@@ -14,6 +15,8 @@ export class OpenAIProvider extends LlmProvider {
   }
 
   async complete(request: LlmRequest, modelString: string): Promise<LlmResponse> {
+    if (request.onToken) return this.completeStreaming(request, modelString);
+
     const apiKey = this.getApiKey();
     const startMs = Date.now();
 
@@ -98,6 +101,74 @@ export class OpenAIProvider extends LlmProvider {
     return this.config.models.map(m => m.modelString);
   }
 
+  // ─── Streaming ─────────────────────────────────────────────────────────────
+
+  protected async completeStreaming(request: LlmRequest, modelString: string): Promise<LlmResponse> {
+    const apiKey = this.getApiKey();
+    const startMs = Date.now();
+    const body = {
+      ...this.buildRequestBody(request, modelString),
+      stream: true,
+      stream_options: { include_usage: true },  // Returns token counts in final chunk
+    };
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.baseUrl}/v1/chat/completions`, {
+        method: 'POST',
+        headers: {
+          Authorization: `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          ...(this.config.defaultHeaders ?? {}),
+        },
+        body: JSON.stringify(body),
+        signal: request.signal,
+      });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err;
+      throw new LlmProviderError(this.providerLabel, null, true, `Network error: ${(err as Error).message}`);
+    }
+
+    if (!response.ok) {
+      const retryable = response.status === 429 || response.status >= 500;
+      throw new LlmProviderError(this.providerLabel, response.status, retryable, `OpenAI API error: ${response.status} ${await response.text()}`);
+    }
+
+    let text = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for await (const line of readSseLines(response, request.signal)) {
+      if (line === '[DONE]') break;
+      try {
+        const chunk = JSON.parse(line) as OpenAISseChunk;
+        const delta = chunk.choices?.[0]?.delta?.content;
+        if (delta) {
+          text += delta;
+          request.onToken!(delta);
+        }
+        // Final chunk from stream_options.include_usage
+        if (chunk.usage) {
+          inputTokens = chunk.usage.prompt_tokens ?? 0;
+          outputTokens = chunk.usage.completion_tokens ?? 0;
+        }
+      } catch { /* skip malformed SSE lines */ }
+    }
+
+    const latencyMs = Date.now() - startMs;
+    const modelConfig = this.config.models.find(m => m.modelString === modelString);
+    return {
+      text,
+      toolCalls: undefined,
+      inputTokens,
+      outputTokens,
+      model: modelString,
+      provider: this.providerLabel,
+      latencyMs,
+      estimatedCostUsd: modelConfig ? calculateCost(modelConfig.pricing, inputTokens, outputTokens) : 0,
+    };
+  }
+
   protected buildRequestBody(request: LlmRequest, modelString: string): Record<string, unknown> {
     const messages: OpenAIMessage[] = [
       { role: 'system', content: request.systemPrompt },
@@ -169,4 +240,11 @@ interface OpenAIResponse {
     total_tokens: number;
   };
   model: string;
+}
+
+// ─── Streaming SSE Chunk Type ─────────────────────────────────────────────────
+
+interface OpenAISseChunk {
+  choices?: Array<{ delta?: { content?: string | null } }>;
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }

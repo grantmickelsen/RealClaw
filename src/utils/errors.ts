@@ -49,6 +49,14 @@ export class CredentialError extends ClawError {
   }
 }
 
+/** Thrown when an LLM call is cancelled — e.g. the WS client disconnected. */
+export class TaskCancelledError extends Error {
+  constructor(public readonly correlationId: string) {
+    super(`Task ${correlationId} was cancelled`);
+    this.name = 'TaskCancelledError';
+  }
+}
+
 export function isRetryable(err: unknown): boolean {
   if (err instanceof ClawError) return err.retryable;
   return false;

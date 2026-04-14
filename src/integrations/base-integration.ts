@@ -1,6 +1,6 @@
 import type { IntegrationConfig, IntegrationStatus, IntegrationId } from '../types/integrations.js';
 import type { CredentialVault } from '../credentials/vault.js';
-import type { RateLimiter } from '../middleware/rate-limiter.js';
+import type { IRateLimiter } from '../middleware/rate-limiter.js';
 import type { AuditLogger } from '../middleware/audit-logger.js';
 import type { AgentId } from '../types/agents.js';
 import { IntegrationError } from '../utils/errors.js';
@@ -11,18 +11,21 @@ const RETRY_AFTER_DEFAULT_MS = 60_000;
 export abstract class BaseIntegration {
   readonly id: IntegrationId;
   readonly config: IntegrationConfig;
+  protected readonly tenantId: string;
   protected readonly vault: CredentialVault;
-  protected readonly rateLimiter: RateLimiter;
+  protected readonly rateLimiter: IRateLimiter;
   protected readonly auditLogger: AuditLogger;
 
   constructor(
     config: IntegrationConfig,
     vault: CredentialVault,
-    rateLimiter: RateLimiter,
+    rateLimiter: IRateLimiter,
     auditLogger: AuditLogger,
+    tenantId = 'default',
   ) {
     this.id = config.id;
     this.config = config;
+    this.tenantId = tenantId;
     this.vault = vault;
     this.rateLimiter = rateLimiter;
     this.auditLogger = auditLogger;
@@ -37,7 +40,7 @@ export abstract class BaseIntegration {
     headers?: Record<string, string>,
   ): Promise<unknown> {
     // Rate limit check
-    const rateCheck = this.rateLimiter.checkLimit(this.id, this.config.rateLimitPerMinute);
+    const rateCheck = await this.rateLimiter.checkLimit(this.tenantId, this.id, this.config.rateLimitPerMinute);
     if (!rateCheck.allowed) {
       throw new IntegrationError(
         this.id,
@@ -200,7 +203,7 @@ export abstract class BaseIntegration {
       status: 'connected',
       lastSuccessfulCall: new Date().toISOString(),
       lastError: null,
-      rateLimitRemaining: this.rateLimiter.getRemainingCalls(this.id, this.config.rateLimitPerMinute),
+      rateLimitRemaining: this.config.rateLimitPerMinute, // getRemainingCalls is async; use config default for status snapshot
       tokenExpiresAt: null,
     };
   }

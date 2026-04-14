@@ -62,6 +62,8 @@ describe('Coordinator', () => {
 
   it('handleApprovalResponse dispatches send_message for approved item', async () => {
     const coordinator = new Coordinator(
+      'test-tenant',
+      tmpDir,
       mockLlmRouter as never,
       mockAuditLogger as never,
       mockEventBus as never,
@@ -109,6 +111,8 @@ describe('Coordinator', () => {
 
   it('handleApprovalResponse skips dispatch for cancel decision', async () => {
     const coordinator = new Coordinator(
+      'test-tenant',
+      tmpDir,
       mockLlmRouter as never,
       mockAuditLogger as never,
       mockEventBus as never,

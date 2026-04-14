@@ -6,17 +6,31 @@ import type {
   MemoryReadResult,
   MemoryWriteRequest,
   MemoryWriteResult,
-  MemoryLock,
 } from '../types/memory.js';
+import { createDistributedLock, type IDistributedLock } from './distributed-lock.js';
 
 const LOCK_TTL_MS = 5_000;
 
 export class MemoryManager {
   private readonly basePath: string;
-  private locks = new Map<string, MemoryLock>();
+  private readonly tenantId: string | undefined;
+  private readonly distributedLock: IDistributedLock;
+  private readonly lockTokens = new Map<string, string>(); // filePath → token
+  private onWriteCallback?: (domain: string, relativePath: string, operation: string) => void;
 
-  constructor(basePath: string = process.env.CLAW_MEMORY_PATH ?? '/opt/claw/memory') {
+  /** Register a callback invoked after every successful memory write. */
+  onMemoryWrite(fn: (domain: string, relativePath: string, operation: string) => void): void {
+    this.onWriteCallback = fn;
+  }
+
+  constructor(
+    basePath: string = process.env.CLAW_MEMORY_PATH ?? '/opt/claw/memory',
+    tenantId?: string,
+    lock?: IDistributedLock,
+  ) {
     this.basePath = basePath;
+    this.tenantId = tenantId;
+    this.distributedLock = lock ?? createDistributedLock();
   }
 
   async read(request: MemoryReadRequest): Promise<MemoryReadResult> {
@@ -70,6 +84,11 @@ export class MemoryManager {
       }
 
       const stats = await fs.stat(fullPath);
+
+      // Notify WS SYNC_UPDATE listeners
+      const domain = request.path.split('/')[0] ?? 'unknown';
+      this.onWriteCallback?.(domain, request.path, request.operation);
+
       return {
         path: request.path,
         success: true,
@@ -85,7 +104,7 @@ export class MemoryManager {
         error: (err as Error).message,
       };
     } finally {
-      this.releaseLock(request.path);
+      await this.releaseLock(request.path);
     }
   }
 
@@ -148,52 +167,45 @@ export class MemoryManager {
   }
 
   private resolvePath(relativePath: string): string {
-    // Prevent directory traversal
+    if (this.tenantId) {
+      // Tenant-scoped: paths live under basePath/tenants/{tenantId}/
+      const tenantBase = path.resolve(this.basePath, 'tenants', this.tenantId);
+      const resolved = path.resolve(tenantBase, relativePath);
+      // Strict guard: resolved path must be inside this tenant's directory
+      if (!resolved.startsWith(tenantBase + path.sep)) {
+        throw new Error(`Invalid memory path: ${relativePath}`);
+      }
+      return resolved;
+    }
+
+    // Legacy flat-path behavior (no tenantId)
     const resolved = path.resolve(this.basePath, relativePath);
-    if (!resolved.startsWith(path.resolve(this.basePath))) {
+    if (!resolved.startsWith(path.resolve(this.basePath) + path.sep) &&
+        resolved !== path.resolve(this.basePath)) {
       throw new Error(`Invalid memory path: ${relativePath}`);
     }
     return resolved;
   }
 
-  private async acquireLock(filePath: string, agentId: AgentId): Promise<void> {
-    this.pruneStaleLocks();
-
-    const existing = this.locks.get(filePath);
-    if (existing) {
-      throw new Error(
-        `Memory file is locked by ${existing.heldBy} until ${existing.expiresAt}`,
-      );
+  private async acquireLock(filePath: string, _agentId: AgentId): Promise<void> {
+    const lockKey = `lock:${filePath}`;
+    const token = await this.distributedLock.acquire(lockKey, LOCK_TTL_MS);
+    if (!token) {
+      throw new Error(`Memory file is locked — another operation is in progress: ${filePath}`);
     }
-
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + LOCK_TTL_MS);
-    this.locks.set(filePath, {
-      path: filePath,
-      heldBy: agentId,
-      acquiredAt: now.toISOString(),
-      expiresAt: expiresAt.toISOString(),
-    });
-
-    // Auto-release after TTL
-    setTimeout(() => this.releaseLock(filePath), LOCK_TTL_MS);
+    this.lockTokens.set(filePath, token);
   }
 
-  private releaseLock(filePath: string): void {
-    this.locks.delete(filePath);
-  }
-
-  private pruneStaleLocks(): void {
-    const now = Date.now();
-    for (const [key, lock] of this.locks) {
-      if (new Date(lock.expiresAt).getTime() <= now) {
-        this.locks.delete(key);
-      }
+  private async releaseLock(filePath: string): Promise<void> {
+    const token = this.lockTokens.get(filePath);
+    if (token) {
+      await this.distributedLock.release(`lock:${filePath}`, token);
+      this.lockTokens.delete(filePath);
     }
   }
 
-  /** Expose lock state for testing */
-  getLock(filePath: string): MemoryLock | undefined {
-    return this.locks.get(filePath);
+  /** Expose whether a lock is held (for testing) */
+  isLocked(filePath: string): boolean {
+    return this.lockTokens.has(filePath);
   }
 }

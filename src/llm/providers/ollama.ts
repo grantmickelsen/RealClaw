@@ -92,6 +92,9 @@ export class OllamaProvider extends LlmProvider {
       input: tc.function.arguments as Record<string, unknown>,
     }));
 
+    // Graceful degradation: emit full text as a single synthetic token
+    if (request.onToken && text) request.onToken(text);
+
     return {
       text,
       toolCalls: toolCalls.length > 0 ? toolCalls : undefined,

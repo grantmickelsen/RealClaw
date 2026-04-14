@@ -14,7 +14,12 @@ export class Synthesizer {
     private readonly agentId: AgentId,
   ) {}
 
-  async synthesize(results: TaskResult[], originalMessage: InboundMessage): Promise<string> {
+  async synthesize(
+    results: TaskResult[],
+    originalMessage: InboundMessage,
+    onToken?: (token: string) => void,
+    signal?: AbortSignal,
+  ): Promise<string> {
     if (results.length === 0) {
       return "I'm working on that. I'll update you shortly.";
     }
@@ -27,9 +32,9 @@ export class Synthesizer {
       return this.extractText(result);
     }
 
-    // Multiple results — synthesize with LLM
+    // Multiple results — synthesize with LLM (streaming if onToken provided)
     const summaries = results
-      .map((r, i) => `Agent ${r.fromAgent} (${r.status}): ${this.extractText(r)}`)
+      .map((r, _i) => `Agent ${r.fromAgent} (${r.status}): ${this.extractText(r)}`)
       .join('\n\n');
 
     const prompt = `Original request: "${originalMessage.content.text}"
@@ -47,6 +52,9 @@ Synthesize a single, concise response.`;
           messages: [{ role: 'user', content: prompt }],
           temperature: 0.5,
           maxOutputTokens: 1024,
+          onToken,
+          signal,
+          correlationId: originalMessage.correlationId,
         },
         this.agentId,
       );

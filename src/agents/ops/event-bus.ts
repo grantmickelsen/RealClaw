@@ -1,8 +1,16 @@
 import type { EventType, SystemEvent } from '../../types/events.js';
 
-type EventHandler = (event: SystemEvent) => void | Promise<void>;
+export type EventHandler = (event: SystemEvent) => void | Promise<void>;
 
-export class EventBus {
+export interface IEventBus {
+  emit(event: SystemEvent): void;
+  subscribe(eventType: EventType, handler: EventHandler): void;
+  unsubscribe(eventType: EventType, handler: EventHandler): void;
+  subscriberCount(eventType: EventType): number;
+  clear(): void;
+}
+
+export class EventBus implements IEventBus {
   private readonly handlers = new Map<EventType, Set<EventHandler>>();
 
   emit(event: SystemEvent): void {

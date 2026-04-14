@@ -1,0 +1,24 @@
+{
+  "clientId": "00000000-0000-0000-0000-000000000001",
+  "clientName": "Grant Mickelsen",
+  "brokerageName": "Example Realty",
+  "licenseNumber": "DRE# 0000000",
+  "email": "grant@example.com",
+  "phone": "+16195929468",
+  "timezone": "America/Los_Angeles",
+  "primaryPlatform": "discord",
+  "platformChannelId": "channel-id-here",
+  "workingHours": {
+    "start": "08:00",
+    "end": "18:00",
+    "days": ["MON", "TUE", "WED", "THU", "FRI"],
+    "dndOverride": false
+  },
+  "briefingTimes": {
+    "morning": "07:00",
+    "midday": null,
+    "evening": "17:30"
+  },
+  "farmAreas": ["93001", "93003", "93004"],
+  "tier": "pro"
+}

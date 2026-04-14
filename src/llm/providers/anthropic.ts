@@ -1,5 +1,6 @@
 import { LlmProvider, LlmProviderError } from '../provider.js';
 import { calculateCost } from '../cost-calculator.js';
+import { readSseLines } from '../sse-reader.js';
 import type {
   LlmRequest,
   LlmResponse,
@@ -15,6 +16,8 @@ export class AnthropicProvider extends LlmProvider {
   }
 
   async complete(request: LlmRequest, modelString: string): Promise<LlmResponse> {
+    if (request.onToken) return this.completeStreaming(request, modelString);
+
     const apiKey = this.getApiKey();
     const startMs = Date.now();
 
@@ -139,6 +142,69 @@ export class AnthropicProvider extends LlmProvider {
   private findModelConfig(modelString: string): ProviderModelConfig | undefined {
     return this.config.models.find(m => m.modelString === modelString);
   }
+
+  // ─── Streaming ───────────────────────────────────────────────────────────────
+
+  private async completeStreaming(request: LlmRequest, modelString: string): Promise<LlmResponse> {
+    const apiKey = this.getApiKey();
+    const startMs = Date.now();
+    const body = { ...this.buildRequestBody(request, modelString), stream: true };
+
+    let response: Response;
+    try {
+      response = await fetch(`${this.config.baseUrl}/v1/messages`, {
+        method: 'POST',
+        headers: {
+          'x-api-key': apiKey,
+          'anthropic-version': '2023-06-01',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify(body),
+        signal: request.signal,
+      });
+    } catch (err) {
+      if ((err as Error).name === 'AbortError') throw err;
+      throw new LlmProviderError(LlmProviderId.ANTHROPIC, null, true, `Network error: ${(err as Error).message}`);
+    }
+
+    if (!response.ok) {
+      const retryable = response.status === 429 || response.status >= 500;
+      throw new LlmProviderError(LlmProviderId.ANTHROPIC, response.status, retryable, `Anthropic API error: ${response.status} ${await response.text()}`);
+    }
+
+    let text = '';
+    let inputTokens = 0;
+    let outputTokens = 0;
+
+    for await (const line of readSseLines(response, request.signal)) {
+      if (line === '[DONE]') break;
+      try {
+        const event = JSON.parse(line) as AnthropicSseEvent;
+        if (event.type === 'content_block_delta' && event.delta?.type === 'text_delta') {
+          const token = event.delta.text;
+          text += token;
+          request.onToken!(token);
+        } else if (event.type === 'message_start') {
+          inputTokens = event.message?.usage?.input_tokens ?? 0;
+        } else if (event.type === 'message_delta') {
+          outputTokens = event.usage?.output_tokens ?? 0;
+        }
+      } catch { /* skip malformed SSE lines */ }
+    }
+
+    const latencyMs = Date.now() - startMs;
+    const modelConfig = this.findModelConfig(modelString);
+    return {
+      text,
+      toolCalls: undefined,
+      inputTokens,
+      outputTokens,
+      model: modelString,
+      provider: LlmProviderId.ANTHROPIC,
+      latencyMs,
+      estimatedCostUsd: modelConfig ? calculateCost(modelConfig.pricing, inputTokens, outputTokens) : 0,
+    };
+  }
 }
 
 // ─── Anthropic API Types ───
@@ -168,4 +234,13 @@ interface AnthropicResponse {
     input_tokens: number;
     output_tokens: number;
   };
+}
+
+// ─── Streaming SSE Event Types ────────────────────────────────────────────────
+
+interface AnthropicSseEvent {
+  type: string;
+  delta?: { type: string; text: string };
+  message?: { usage?: { input_tokens: number } };
+  usage?: { output_tokens: number };
 }

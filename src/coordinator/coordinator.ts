@@ -9,6 +9,7 @@ import type {
   OutboundMessage,
   HeartbeatTrigger,
 } from '../types/messages.js';
+import type { WsEnvelope } from '../types/ws.js';
 import { sanitize } from '../middleware/input-sanitizer.js';
 import { CoordinatorRouter } from './router.js';
 import { Dispatcher } from './dispatcher.js';
@@ -16,8 +17,16 @@ import { Synthesizer } from './synthesizer.js';
 import { ApprovalManager } from './approval.js';
 import type { LlmRouter } from '../llm/router.js';
 import type { AuditLogger } from '../middleware/audit-logger.js';
-import type { EventBus } from '../agents/ops/event-bus.js';
+import type { IEventBus } from '../agents/ops/event-bus.js';
 import { formatOutbound } from '../utils/normalize.js';
+
+/**
+ * Narrow interface for pushing WS events — lets the Coordinator push events
+ * without a direct dependency on the ws package or WsSessionManager class.
+ */
+export interface WsPusher {
+  push(tenantId: string, envelope: WsEnvelope): void;
+}
 
 interface ClientConfig {
   clientId: string;
@@ -38,17 +47,23 @@ export class Coordinator {
   private readonly approvalManager: ApprovalManager;
 
   // Outbound message callback (set by gateway)
-  private sendMessage?: (platform: string, channelId: string, payload: unknown) => Promise<void>;
+  private sendMessage?: (platform: string, channelId: string, payload: unknown, correlationId?: string) => Promise<void>;
+
+  // WS pusher (set by gateway after construction)
+  private wsPusher?: WsPusher;
 
   constructor(
+    private readonly tenantId: string,
+    tenantMemoryPath: string,
     private readonly llmRouter: LlmRouter,
     private readonly auditLogger: AuditLogger,
-    private readonly eventBus: EventBus,
+    private readonly eventBus: IEventBus,
+    private readonly queryFn?: (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>,
   ) {
     this.clawRouter = new CoordinatorRouter(llmRouter, this.agentId);
     this.dispatcher = new Dispatcher();
     this.synthesizer = new Synthesizer(llmRouter, this.agentId);
-    this.approvalManager = new ApprovalManager();
+    this.approvalManager = new ApprovalManager(tenantId, tenantMemoryPath, undefined, queryFn);
 
     this.approvalManager.onExecute(async (request, response) => {
       const approvedDecisions = response.decisions.filter(d => d.decision === 'approve');
@@ -68,7 +83,7 @@ export class Coordinator {
           taskType: 'send_message',
           instructions: item.fullContent ?? item.preview,
           context: {
-            clientId: this.clientConfig?.clientId ?? 'default',
+            clientId: this.tenantId,
             contactId: item.recipients[0],
           },
           data: {
@@ -102,43 +117,55 @@ export class Coordinator {
       this.soulPrompt = 'You are Claw, a professional real estate executive assistant.';
     }
 
+    // Helper: read config file from tenant-specific dir, falling back to root configDir
+    const tenantConfigDir = `${configDir}/tenants/${this.tenantId}`;
+    const readConfig = async (filename: string): Promise<string | null> => {
+      for (const dir of [tenantConfigDir, configDir]) {
+        try {
+          return await fs.readFile(`${dir}/${filename}`, 'utf-8');
+        } catch {
+          // try next location
+        }
+      }
+      return null;
+    };
+
     // Load client config
-    try {
-      const raw = await fs.readFile(`${configDir}/client.json`, 'utf-8');
-      this.clientConfig = JSON.parse(raw) as ClientConfig;
-    } catch {
-      console.warn('[Coordinator] No client.json found');
+    const clientRaw = await readConfig('client.json');
+    if (clientRaw) {
+      this.clientConfig = JSON.parse(clientRaw) as ClientConfig;
+    } else {
+      console.warn(`[Coordinator:${this.tenantId}] No client.json found`);
     }
 
     // Load agents config for routing
-    try {
-      const raw = await fs.readFile(`${configDir}/agents.json`, 'utf-8');
-      const agentsConfig = JSON.parse(raw);
-      this.clawRouter.setConfig(agentsConfig);
-    } catch {
-      console.warn('[Coordinator] No agents.json found');
+    const agentsRaw = await readConfig('agents.json');
+    if (agentsRaw) {
+      this.clawRouter.setConfig(JSON.parse(agentsRaw));
+    } else {
+      console.warn(`[Coordinator:${this.tenantId}] No agents.json found`);
     }
 
-    // Load approval config
-    try {
-      const raw = await fs.readFile(`${configDir}/approval-gates.json`, 'utf-8');
-      const approvalConfig = JSON.parse(raw);
-      // Config is passed to ApprovalManager during construction
-      void approvalConfig;
-    } catch {
-      console.warn('[Coordinator] No approval-gates.json found');
+    // Load approval config (currently informational — ApprovalManager uses constructor defaults)
+    const approvalRaw = await readConfig('approval-gates.json');
+    if (!approvalRaw) {
+      console.warn(`[Coordinator:${this.tenantId}] No approval-gates.json found`);
     }
 
     await this.approvalManager.loadFromDisk();
   }
 
   onSendMessage(
-    callback: (platform: string, channelId: string, payload: unknown) => Promise<void>,
+    callback: (platform: string, channelId: string, payload: unknown, correlationId?: string) => Promise<void>,
   ): void {
     this.sendMessage = callback;
   }
 
-  async handleInbound(message: InboundMessage): Promise<void> {
+  onWsPush(pusher: WsPusher): void {
+    this.wsPusher = pusher;
+  }
+
+  async handleInbound(message: InboundMessage, signal?: AbortSignal): Promise<void> {
     console.log(`[Coordinator] Inbound from ${message.platform}/${message.channelId}: "${message.content.text.slice(0, 80)}"`);
 
     // Sanitize input
@@ -172,6 +199,19 @@ export class Coordinator {
       await this.reply(message, decision.clarifyingQuestion ?? 'Could you clarify your request?');
       return;
     }
+
+    // Push AGENT_TYPING — client shows "Claw is thinking…"
+    this.wsPusher?.push(this.tenantId, {
+      type: 'AGENT_TYPING',
+      correlationId: message.correlationId,
+      tenantId: this.tenantId,
+      timestamp: new Date().toISOString(),
+      payload: {
+        intent: decision.intent,
+        targets: decision.targets,
+        dispatchMode: decision.dispatchMode,
+      },
+    });
 
     // Build task requests
     const baseRequest: TaskRequest = {
@@ -243,21 +283,44 @@ export class Coordinator {
     // Handle approvals
     const approvalItems = this.synthesizer.extractPendingApprovals(results);
     if (approvalItems.length > 0) {
+      let approvalTokenSeq = 0;
+      const approvalOnToken = (token: string) => {
+        this.wsPusher?.push(this.tenantId, {
+          type: 'TOKEN_STREAM',
+          correlationId: message.correlationId,
+          tenantId: this.tenantId,
+          timestamp: new Date().toISOString(),
+          payload: { token, agentId: this.agentId, sequenceIndex: approvalTokenSeq++ },
+        });
+      };
       const approvalRequest = await this.approvalManager.createApprovalRequest(approvalItems);
-      const text = await this.synthesizer.synthesize(results, sanitizedMessage);
+      const text = await this.synthesizer.synthesize(results, sanitizedMessage, approvalOnToken, signal);
       const outbound: OutboundMessage = {
         platform: message.platform,
         channelId: message.channelId,
         text,
+        correlationId: message.correlationId,
         approvalRequest,
       };
       const payload = formatOutbound(message.platform, outbound);
-      await this.sendMessage?.(message.platform, message.channelId, payload);
+      await this.sendMessage?.(message.platform, message.channelId, payload, message.correlationId);
       return;
     }
 
+    // Build onToken callback for synthesis streaming
+    let tokenSeq = 0;
+    const onToken = (token: string) => {
+      this.wsPusher?.push(this.tenantId, {
+        type: 'TOKEN_STREAM',
+        correlationId: message.correlationId,
+        tenantId: this.tenantId,
+        timestamp: new Date().toISOString(),
+        payload: { token, agentId: this.agentId, sequenceIndex: tokenSeq++ },
+      });
+    };
+
     // Synthesize and reply
-    const response = await this.synthesizer.synthesize(results, sanitizedMessage);
+    const response = await this.synthesizer.synthesize(results, sanitizedMessage, onToken, signal);
     await this.reply(message, response);
 
     // Process side effects
@@ -334,9 +397,10 @@ export class Coordinator {
       platform: message.platform,
       channelId: message.channelId,
       text,
+      correlationId: message.correlationId,
     };
     const payload = formatOutbound(message.platform, outbound);
     console.log(`[Coordinator] Reply to ${message.platform}/${message.channelId}: "${text.slice(0, 120)}${text.length > 120 ? '…' : ''}"`);
-    await this.sendMessage?.(message.platform, message.channelId, payload);
+    await this.sendMessage?.(message.platform, message.channelId, payload, message.correlationId);
   }
 }

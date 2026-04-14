@@ -9,6 +9,7 @@ interface HeartbeatSchedule {
   targets: AgentId[] | 'all';
   parameters: Record<string, unknown>;
   enabled?: boolean;
+  tenantId?: string;
 }
 
 interface HeartbeatConfig {
@@ -26,7 +27,7 @@ export class HeartbeatScheduler {
     this.handler = handler;
   }
 
-  load(config: HeartbeatConfig): void {
+  load(config: HeartbeatConfig, tenantId?: string): void {
     this.stop();
 
     for (const schedule of config.schedules) {
@@ -46,6 +47,7 @@ export class HeartbeatScheduler {
             timestamp: new Date().toISOString(),
             correlationId: uuidv4(),
             type: 'HEARTBEAT_TRIGGER',
+            tenantId: schedule.tenantId ?? tenantId,
             triggerName: schedule.name,
             targetAgents: schedule.targets,
             parameters: schedule.parameters,

@@ -39,6 +39,10 @@ services:
         condition: service_started
       browser:
         condition: service_started
+      claw_db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
 
   # ─── Manifest — Smart LLM Router ──────────────────────────────────────────
   # Dashboard: http://localhost:3001
@@ -93,6 +97,39 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
+    restart: unless-stopped
+
+  # ─── RealClaw DB — PostgreSQL for tenant registry, messages, approvals ──────
+  claw_db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: claw
+      POSTGRES_PASSWORD: claw
+      POSTGRES_DB: realclaw
+    volumes:
+      - claw_pgdata:/var/lib/postgresql/data
+    networks:
+      - claw-internal
+    healthcheck:
+      test: pg_isready -U claw
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # ─── Redis — Session state, rate limits, write locks, task cancellation ─────
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no  # in-memory only, no persistence needed
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks:
+      - claw-internal
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
     restart: unless-stopped
 
   # ─── Browserless — Headless Chrome sandbox ────────────────────────────────
@@ -150,5 +187,6 @@ networks:
 
 volumes:
   pgdata:
+  claw_pgdata:
   # Uncomment if using Ollama:
   # ollama-models:
