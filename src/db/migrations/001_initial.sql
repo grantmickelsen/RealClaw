@@ -69,7 +69,7 @@ CREATE INDEX idx_device_tokens_tenant ON tenant_device_tokens(tenant_id);
 
 -- ─── Migration tracking ───────────────────────────────────────────────────────
 
-CREATE TABLE schema_migrations (
+CREATE TABLE IF NOT EXISTS schema_migrations (
   migration_id  VARCHAR(255) PRIMARY KEY,
   applied_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
