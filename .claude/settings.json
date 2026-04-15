@@ -35,10 +35,20 @@
       "Bash(node_modules/.bin/tsc --noEmit)",
       "Bash(/home/grant/.nvm/versions/node/v22.13.0/bin/npx tsc:*)",
       "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/node ./node_modules/.bin/tsc --noEmit)",
-      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/node ./node_modules/.bin/vitest run)"
+      "Bash(/home/grant/.nvm/versions/node/v22.12.0/bin/node ./node_modules/.bin/vitest run)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/npm --version)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node --version)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node ~/.nvm/versions/node/v22.12.0/lib/node_modules/npm/bin/npm-cli.js --version)",
+      "Bash(~/.nvm/versions/node/v22.12.0/bin/node ~/.nvm/versions/node/v22.12.0/lib/node_modules/npm/bin/npm-cli.js install)",
+      "Bash(sudo ln:*)",
+      "Bash(cat)",
+      "Bash(chmod +x ~/.local/bin/node)",
+      "Bash(chmod +x ~/.local/bin/npm)",
+      "Bash(chmod +x ~/.local/bin/npx)"
     ],
     "additionalDirectories": [
-      "/home/grant/.claude/plans"
+      "/home/grant/.claude/plans",
+      "/home/grant"
     ]
   }
 }
