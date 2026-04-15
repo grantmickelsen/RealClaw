@@ -2,7 +2,7 @@ node_modules/
 dist/
 .env
 .env
-credentials/
+/credentials/
 memory/client-profile/
 memory/contacts/
 memory/transactions/

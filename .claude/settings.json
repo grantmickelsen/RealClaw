@@ -44,7 +44,8 @@
       "Bash(cat)",
       "Bash(chmod +x ~/.local/bin/node)",
       "Bash(chmod +x ~/.local/bin/npm)",
-      "Bash(chmod +x ~/.local/bin/npx)"
+      "Bash(chmod +x ~/.local/bin/npx)",
+      "Bash(node node_modules/.bin/tsc --noEmit)"
     ],
     "additionalDirectories": [
       "/home/grant/.claude/plans",
