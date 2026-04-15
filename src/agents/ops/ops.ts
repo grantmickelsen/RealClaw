@@ -2,6 +2,7 @@ import { BaseAgent } from '../base-agent.js';
 import { ModelTier } from '../../types/agents.js';
 import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSection } from '../../types/messages.js';
 import type { EventType } from '../../types/events.js';
+import log from '../../utils/logger.js';
 
 export class OpsAgent extends BaseAgent {
   protected override async onEvent(
@@ -126,7 +127,7 @@ export class OpsAgent extends BaseAgent {
         body,
       });
     } catch (err) {
-      console.error('[Ops] Failed to send admin alert:', err);
+      log.error('[Ops] Failed to send admin alert', { error: (err as Error).message });
     }
   }
 }

@@ -12,6 +12,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import { WebSocketServer, WebSocket } from 'ws';
+import log from './utils/logger.js';
+import { requestContext } from './utils/request-context.js';
 
 import Redis from 'ioredis';
 import { createLlmRouter } from './llm/factory.js';
@@ -34,6 +36,9 @@ import { OAuthHandler } from './credentials/oauth-handler.js';
 import { extractTenant } from './middleware/auth.js';
 import type { AuthContext } from './middleware/auth.js';
 import { AuthError } from './middleware/auth.js';
+import { verifyAppleIdentityToken } from './auth/apple-auth.js';
+import { verifyGoogleIdentityToken } from './auth/google-auth.js';
+import { issueTokenPair, rotateRefreshToken, revokeAllTokens } from './auth/token-service.js';
 import { WsSessionManager } from './gateway/ws-session-manager.js';
 import { createCancellationStore } from './gateway/cancellation-store.js';
 import { TaskCancelledError } from './utils/errors.js';
@@ -66,16 +71,7 @@ const OAUTH_REDIRECT_BASE = process.env.CLAW_OAUTH_REDIRECT_BASE ?? `http://loca
 // CSRF state store — maps state token → { integrationId, expiresAt }
 const oauthStateStore = new Map<string, { integrationId: string; expiresAt: number }>();
 
-// ─── Logging ───
-
-function log(level: 'info' | 'warn' | 'error', message: string, ...args: unknown[]): void {
-  const ts = new Date().toISOString();
-  const logLevel = (process.env.OPENCLAW_LOG_LEVEL ?? 'info').toLowerCase();
-  const levels = { info: 0, warn: 1, error: 2 };
-  if ((levels[level] ?? 0) >= (levels[logLevel as keyof typeof levels] ?? 0)) {
-    console[level](`[${ts}] [${level.toUpperCase()}] ${message}`, ...args);
-  }
-}
+// ─── Logging ─── (log imported from ./utils/logger.js above)
 
 // ─── TenantRegistry ──────────────────────────────────────────────────────────
 
@@ -105,7 +101,7 @@ class TenantRegistry {
     const existing = this.entries.get(tenantId);
     if (existing) return existing.coordinator;
 
-    log('info', `[TenantRegistry] Initializing tenant: ${tenantId}`);
+    log.info(`[TenantRegistry] Initializing tenant: ${tenantId}`);
 
     // Ensure tenant row exists in DB before any FK-constrained writes
     if (this.dbAvailable) {
@@ -152,7 +148,7 @@ class TenantRegistry {
     }
 
     await Promise.all([...agentRegistry.values()].map(a => a.init()));
-    log('info', `[TenantRegistry:${tenantId}] ${agentRegistry.size} agents ready`);
+    log.info(`[TenantRegistry:${tenantId}] ${agentRegistry.size} agents ready`);
 
     // ─── Coordinator ───
     const queryFn = this.dbAvailable ? query : undefined;
@@ -164,7 +160,7 @@ class TenantRegistry {
     }
 
     coordinator.onSendMessage(async (platform, channelId, payload, correlationId) => {
-      log('info', `[Outbound:${tenantId}] ${platform}/${channelId}: ${JSON.stringify(payload).slice(0, 200)}`);
+      log.info(`[Outbound:${tenantId}] ${platform}/${channelId}: ${JSON.stringify(payload).slice(0, 200)}`);
       const key = `${tenantId}:${channelId}`;
       const history = this.responseStore.get(key) ?? [];
       history.push({ platform, payload, timestamp: new Date().toISOString() });
@@ -241,7 +237,7 @@ class TenantRegistry {
       const bullMqHb = new BullMqHeartbeatScheduler(this.bullMqConnection);
       bullMqHb.onTrigger(trigger => coordinator.handleHeartbeat(trigger));
       await bullMqHb.loadForTenant(tenantId, heartbeatConfig as Parameters<BullMqHeartbeatScheduler['loadForTenant']>[1]);
-      log('info', `[TenantRegistry:${tenantId}] Heartbeat: BullMQ loaded (${bullMqHb.listScheduled(tenantId).length} queue(s))`);
+      log.info(`[TenantRegistry:${tenantId}] Heartbeat: BullMQ loaded (${bullMqHb.listScheduled(tenantId).length} queue(s))`);
       heartbeat = bullMqHb;
     } else {
       // In-process node-cron heartbeat — for dev/single-instance deployments
@@ -249,9 +245,9 @@ class TenantRegistry {
       cronHb.onTrigger(trigger => coordinator.handleHeartbeat(trigger));
       if (heartbeatConfig) {
         cronHb.load(heartbeatConfig as Parameters<HeartbeatScheduler['load']>[0], tenantId);
-        log('info', `[TenantRegistry:${tenantId}] Heartbeat: cron loaded (${cronHb.listScheduled().length} schedule(s))`);
+        log.info(`[TenantRegistry:${tenantId}] Heartbeat: cron loaded (${cronHb.listScheduled().length} schedule(s))`);
       } else {
-        log('warn', `[TenantRegistry:${tenantId}] No heartbeat config found — scheduled tasks disabled`);
+        log.warn(`[TenantRegistry:${tenantId}] No heartbeat config found — scheduled tasks disabled`);
       }
       heartbeat = cronHb;
     }
@@ -283,11 +279,22 @@ class TenantRegistry {
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
-function readBody(req: http.IncomingMessage): Promise<string> {
+const MAX_BODY_BYTES = 1_048_576; // 1 MB — enforced before JSON parsing
+
+function readBodySafe(req: http.IncomingMessage): Promise<string> {
   return new Promise((resolve, reject) => {
-    let body = '';
-    req.on('data', chunk => { body += chunk; });
-    req.on('end', () => resolve(body));
+    let size = 0;
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => {
+      size += chunk.length;
+      if (size > MAX_BODY_BYTES) {
+        req.destroy();
+        reject(Object.assign(new Error('PAYLOAD_TOO_LARGE'), { statusCode: 413 }));
+        return;
+      }
+      chunks.push(chunk);
+    });
+    req.on('end', () => resolve(Buffer.concat(chunks).toString()));
     req.on('error', reject);
   });
 }
@@ -297,17 +304,49 @@ function sendJson(res: http.ServerResponse, status: number, data: unknown): void
   res.end(JSON.stringify(data));
 }
 
+function setSecurityHeaders(res: http.ServerResponse): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  res.setHeader('Content-Security-Policy', "default-src 'self'");
+}
+
+// IP-based auth rate limiting — 20 attempts per IP per 15 min (blocks credential stuffing)
+const AUTH_WINDOW_MS = 900_000;
+const AUTH_MAX_ATTEMPTS = 20;
+const authAttemptStore = new Map<string, number[]>();
+
+function checkAuthRateLimit(req: http.IncomingMessage): boolean {
+  const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
+    ?? req.socket?.remoteAddress
+    ?? 'unknown';
+  const now = Date.now();
+  const recent = (authAttemptStore.get(ip) ?? []).filter(t => now - t < AUTH_WINDOW_MS);
+  if (recent.length >= AUTH_MAX_ATTEMPTS) return false;
+  recent.push(now);
+  authAttemptStore.set(ip, recent);
+  // Periodic cleanup to prevent Map from growing unbounded
+  if (authAttemptStore.size > 10_000) {
+    for (const [k, v] of authAttemptStore) {
+      if (v.every(t => now - t >= AUTH_WINDOW_MS)) authAttemptStore.delete(k);
+    }
+  }
+  return true;
+}
+
 async function bootstrap(): Promise<void> {
-  log('info', 'Starting Claw gateway...');
+  log.info('Starting Claw gateway...');
 
   // ─── Core Services ───
   const memoryPath = process.env.CLAW_MEMORY_PATH ?? path.resolve(__dirname, '..', 'memory');
   const vault = new CredentialVault();
 
   const bootstrapResult = await bootstrapCredentialsFromEnv(vault);
-  log('info', `Credential bootstrap: seeded=[${bootstrapResult.seeded.join(',')}]`);
+  log.info(`Credential bootstrap: seeded=[${bootstrapResult.seeded.join(',')}]`);
   for (const f of bootstrapResult.failed) {
-    log('warn', `Bootstrap failed ${f.id}: ${f.error}`);
+    log.warn(`Bootstrap failed ${f.id}: ${f.error}`);
   }
 
   // ─── WebSocket Session Manager + Cancellation Store ───
@@ -318,33 +357,37 @@ async function bootstrap(): Promise<void> {
   let redisClient: Redis | undefined;
   if (process.env.REDIS_URL) {
     redisClient = new Redis(process.env.REDIS_URL, { lazyConnect: true, enableOfflineQueue: false });
-    redisClient.on('error', (err: Error) => log('error', '[Redis] Connection error:', err.message));
-    redisClient.on('connect', () => log('info', '[Redis] Connected'));
-    log('info', `[Redis] Configured — host: ${new URL(process.env.REDIS_URL).hostname}`);
+    redisClient.on('error', (err: Error) => log.error('[Redis] Connection error', { error: err.message }));
+    redisClient.on('connect', () => log.info('[Redis] Connected'));
+    log.info(`[Redis] Configured — host: ${new URL(process.env.REDIS_URL).hostname}`);
   } else {
-    log('info', '[Redis] Not configured — using in-process fallbacks for locking, events, rate-limiting');
+    log.info('[Redis] Not configured — using in-process fallbacks for locking, events, rate-limiting');
   }
 
   // ─── DB availability + push notification service ───
   const dbAvailable = !!process.env.DATABASE_URL;
   const pushService = dbAvailable ? createPushNotificationService(query) : null;
   if (pushService) {
-    log('info', '[Push] Push notification service enabled');
+    log.info('[Push] Push notification service enabled');
   }
 
   // ─── BullMQ connection (used for distributed heartbeat scheduler) ───
   const bullMqConnection = process.env.REDIS_URL ? parseRedisUrl(process.env.REDIS_URL) : undefined;
   if (bullMqConnection) {
-    log('info', '[BullMQ] Distributed heartbeat scheduling enabled');
+    log.info('[BullMQ] Distributed heartbeat scheduling enabled');
   }
 
-  log('info', 'Initializing LLM router...');
+  log.info('Initializing LLM router...');
   const llmRouter = await createLlmRouter(MODELS_CONFIG, cancellationStore);
 
-  log('info', 'Running LLM health checks...');
+  log.info('Running LLM health checks...');
   const health = await llmRouter.healthCheckAll();
   for (const [provider, ok] of Object.entries(health)) {
-    log(ok ? 'info' : 'warn', `  Provider ${provider}: ${ok ? 'OK' : 'UNAVAILABLE'}`);
+    if (ok) {
+      log.info(`  Provider ${provider}: OK`);
+    } else {
+      log.warn(`  Provider ${provider}: UNAVAILABLE`);
+    }
   }
 
   // ─── Response store (keyed by tenantId:channelId) ───
@@ -358,7 +401,7 @@ async function bootstrap(): Promise<void> {
 
   // Eagerly initialize the default tenant for backward compatibility
   await tenantRegistry.getOrCreate('default');
-  log('info', `Gateway ready — ${tenantRegistry.size()} tenant(s) initialized`);
+  log.info(`Gateway ready — ${tenantRegistry.size()} tenant(s) initialized`);
 
   // ─── Gateway HTTP Server ───
   const server = http.createServer(async (req, res) => {
@@ -369,9 +412,34 @@ async function bootstrap(): Promise<void> {
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Tenant-Id');
 
+    // Security headers — applied to every response
+    setSecurityHeaders(res);
+
     if (req.method === 'OPTIONS') {
       res.writeHead(204);
       res.end();
+      return;
+    }
+
+    // ─── GET /health/live — K8s liveness probe (never calls external deps) ───
+    if (req.method === 'GET' && url.pathname === '/health/live') {
+      sendJson(res, 200, { ok: true, uptime: Math.floor(process.uptime()) });
+      return;
+    }
+
+    // ─── GET /health/ready — K8s readiness probe (checks DB + Redis + LLM) ───
+    if (req.method === 'GET' && url.pathname === '/health/ready') {
+      const checks: Record<string, boolean> = {};
+      try { await query('SELECT 1'); checks['postgres'] = true; }
+      catch { checks['postgres'] = false; }
+      try {
+        if (redisClient) { await redisClient.ping(); }
+        checks['redis'] = true;
+      } catch { checks['redis'] = false; }
+      const llmHealth = await llmRouter.healthCheckAll();
+      checks['llm'] = Object.values(llmHealth).some(Boolean);
+      const ready = Object.values(checks).every(Boolean);
+      sendJson(res, ready ? 200 : 503, { ready, checks });
       return;
     }
 
@@ -402,6 +470,118 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    // ─── POST /v1/auth/apple ─────────────────────────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/auth/apple') {
+      if (!checkAuthRateLimit(req)) {
+        sendJson(res, 429, { error: 'Too many authentication attempts. Try again in 15 minutes.' });
+        return;
+      }
+      try {
+        const body = JSON.parse(await readBodySafe(req)) as {
+          identityToken?: string;
+          fullName?: { givenName?: string; familyName?: string };
+        };
+        const clientId = process.env.APPLE_CLIENT_ID;
+        if (!clientId) { sendJson(res, 503, { error: 'Apple auth not configured' }); return; }
+        if (!body.identityToken) { sendJson(res, 400, { error: 'identityToken required' }); return; }
+
+        const payload = await verifyAppleIdentityToken(body.identityToken, clientId);
+        await upsertTenant(payload.sub);
+
+        const userResult = await query<{ user_id: string }>(
+          `INSERT INTO tenant_users (tenant_id, apple_sub, email, display_name)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (apple_sub) DO UPDATE
+             SET email = COALESCE(EXCLUDED.email, tenant_users.email),
+                 display_name = COALESCE(EXCLUDED.display_name, tenant_users.display_name)
+           RETURNING user_id`,
+          [
+            payload.sub,
+            payload.sub,
+            payload.email ?? null,
+            body.fullName
+              ? `${body.fullName.givenName ?? ''} ${body.fullName.familyName ?? ''}`.trim() || null
+              : null,
+          ],
+        );
+        const userId = userResult.rows[0]?.user_id;
+        if (!userId) { sendJson(res, 500, { error: 'User creation failed' }); return; }
+
+        const tokens = await issueTokenPair(payload.sub, userId);
+        sendJson(res, 200, tokens);
+      } catch (err) {
+        sendJson(res, 401, { error: (err as Error).message });
+      }
+      return;
+    }
+
+    // ─── POST /v1/auth/google ─────────────────────────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/auth/google') {
+      if (!checkAuthRateLimit(req)) {
+        sendJson(res, 429, { error: 'Too many authentication attempts. Try again in 15 minutes.' });
+        return;
+      }
+      try {
+        const body = JSON.parse(await readBodySafe(req)) as { idToken?: string };
+        const clientId = process.env.GOOGLE_CLIENT_ID;
+        if (!clientId) { sendJson(res, 503, { error: 'Google auth not configured' }); return; }
+        if (!body.idToken) { sendJson(res, 400, { error: 'idToken required' }); return; }
+
+        const payload = await verifyGoogleIdentityToken(body.idToken, clientId);
+        await upsertTenant(payload.sub);
+
+        const userResult = await query<{ user_id: string }>(
+          `INSERT INTO tenant_users (tenant_id, google_sub, email, display_name)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT (google_sub) DO UPDATE
+             SET email = EXCLUDED.email,
+                 display_name = COALESCE(EXCLUDED.display_name, tenant_users.display_name)
+           RETURNING user_id`,
+          [payload.sub, payload.sub, payload.email, payload.name ?? null],
+        );
+        const userId = userResult.rows[0]?.user_id;
+        if (!userId) { sendJson(res, 500, { error: 'User creation failed' }); return; }
+
+        const tokens = await issueTokenPair(payload.sub, userId);
+        sendJson(res, 200, tokens);
+      } catch (err) {
+        sendJson(res, 401, { error: (err as Error).message });
+      }
+      return;
+    }
+
+    // ─── POST /v1/auth/refresh ────────────────────────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/auth/refresh') {
+      if (!checkAuthRateLimit(req)) {
+        sendJson(res, 429, { error: 'Too many authentication attempts. Try again in 15 minutes.' });
+        return;
+      }
+      try {
+        const body = JSON.parse(await readBodySafe(req)) as { refreshToken?: string };
+        if (!body.refreshToken) { sendJson(res, 400, { error: 'refreshToken required' }); return; }
+        const tokens = await rotateRefreshToken(body.refreshToken);
+        if (!tokens) { sendJson(res, 401, { error: 'Invalid or expired refresh token' }); return; }
+        sendJson(res, 200, tokens);
+      } catch (err) {
+        sendJson(res, 500, { error: (err as Error).message });
+      }
+      return;
+    }
+
+    // ─── POST /v1/auth/revoke ─────────────────────────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/auth/revoke') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch {
+        sendJson(res, 401, { error: 'Unauthorized' });
+        return;
+      }
+      await revokeAllTokens(auth.userId);
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     // ─── POST /v1/messages (JWT required) — async 202 ───
     if (req.method === 'POST' && url.pathname === '/v1/messages') {
       let auth: AuthContext;
@@ -413,9 +593,10 @@ async function bootstrap(): Promise<void> {
       }
       let body: string;
       try {
-        body = await readBody(req);
+        body = await readBodySafe(req);
       } catch (err) {
-        sendJson(res, 400, { ok: false, error: 'Failed to read request body' });
+        const status = (err as { statusCode?: number }).statusCode === 413 ? 413 : 400;
+        sendJson(res, status, { ok: false, error: (err as Error).message === 'PAYLOAD_TOO_LARGE' ? 'Request body too large (max 1MB)' : 'Failed to read request body' });
         return;
       }
       let message: InboundMessage;
@@ -448,7 +629,7 @@ async function bootstrap(): Promise<void> {
           await coordinator.handleInbound(message, controller.signal);
         } catch (err) {
           if (err instanceof TaskCancelledError) return;
-          log('error', `[Gateway] Async message error for ${tenantId}/${correlationId}:`, err);
+          log.error(`[Gateway] Async message error for ${tenantId}/${correlationId}`, { error: (err as Error).message });
           wsSessionManager.push(tenantId, {
             type: 'ERROR',
             correlationId,
@@ -477,7 +658,7 @@ async function bootstrap(): Promise<void> {
         return;
       }
       try {
-        const body = await readBody(req);
+        const body = await readBodySafe(req);
         const response = JSON.parse(body) as ApprovalResponse;
         const coordinator = await tenantRegistry.getOrCreate(auth.tenantId);
         await coordinator.handleApprovalResponse(response);
@@ -538,9 +719,10 @@ async function bootstrap(): Promise<void> {
       }
       let body: string;
       try {
-        body = await readBody(req);
-      } catch {
-        sendJson(res, 400, { ok: false, error: 'Failed to read request body' });
+        body = await readBodySafe(req);
+      } catch (err) {
+        const status = (err as { statusCode?: number }).statusCode === 413 ? 413 : 400;
+        sendJson(res, status, { ok: false, error: (err as Error).message === 'PAYLOAD_TOO_LARGE' ? 'Request body too large (max 1MB)' : 'Failed to read request body' });
         return;
       }
       try {
@@ -564,7 +746,7 @@ async function bootstrap(): Promise<void> {
     // ─── Legacy: POST /message (no auth — uses default tenant) ───
     if (req.method === 'POST' && url.pathname === '/message') {
       try {
-        const body = await readBody(req);
+        const body = await readBodySafe(req);
         const raw = JSON.parse(body) as Record<string, unknown>;
         const platform = String(raw['platform'] ?? 'discord');
         const message = normalizeInbound(platform, raw);
@@ -580,7 +762,7 @@ async function bootstrap(): Promise<void> {
     // ─── Legacy: POST /approval (no auth — uses default tenant) ───
     if (req.method === 'POST' && url.pathname === '/approval') {
       try {
-        const body = await readBody(req);
+        const body = await readBodySafe(req);
         const response = JSON.parse(body) as ApprovalResponse;
         const coordinator = await tenantRegistry.getOrCreate('default');
         await coordinator.handleApprovalResponse(response);
@@ -677,7 +859,7 @@ async function bootstrap(): Promise<void> {
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<html><body><h1>Connected!</h1><p>${integrationId} is now connected. You may close this window.</p></body></html>`);
       } catch (err) {
-        log('error', `OAuth callback failed for ${integrationId}:`, err);
+        log.error(`OAuth callback failed for ${integrationId}`, { error: (err as Error).message });
         res.writeHead(500, { 'Content-Type': 'text/html' });
         res.end('<html><body><h1>OAuth Failed</h1><p>Check gateway logs for details.</p></body></html>');
       }
@@ -706,10 +888,21 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    const token = upgradeUrl.searchParams.get('token');
+    // Primary: Sec-WebSocket-Protocol: bearer.<token>  (avoids URL logging)
+    // Fallback: ?token= query param (dev tooling — wscat, etc.)
+    let authToken: string | undefined;
+    const protocol = req.headers['sec-websocket-protocol'];
+    if (protocol) {
+      const bearerProto = protocol.split(',').map(s => s.trim()).find(p => p.startsWith('bearer.'));
+      if (bearerProto) authToken = bearerProto.slice('bearer.'.length);
+    }
+    if (!authToken) authToken = upgradeUrl.searchParams.get('token') ?? undefined;
+
     let auth: AuthContext;
     try {
-      auth = requireAuth({ headers: { authorization: token ? `Bearer ${token}` : '' } } as http.IncomingMessage);
+      auth = requireAuth({
+        headers: { authorization: authToken ? `Bearer ${authToken}` : '' },
+      } as http.IncomingMessage);
     } catch {
       socket.write('HTTP/1.1 401 Unauthorized\r\n\r\n');
       socket.destroy();
@@ -730,7 +923,7 @@ async function bootstrap(): Promise<void> {
         try {
           const msg = JSON.parse(data.toString()) as { type?: string; correlationIds?: unknown[] };
           if (msg.type === 'SUBSCRIBE' && Array.isArray(msg.correlationIds)) {
-            log('info', `[WS:${auth.tenantId}] SUBSCRIBE to ${msg.correlationIds.length} correlationId(s)`);
+            log.info(`[WS:${auth.tenantId}] SUBSCRIBE to ${msg.correlationIds.length} correlationId(s)`);
           }
         } catch { /* ignore malformed messages */ }
       });
@@ -747,50 +940,63 @@ async function bootstrap(): Promise<void> {
         payload: {},
       }));
 
-      log('info', `[WS] Client connected — tenant: ${auth.tenantId}, sessions: ${wsSessionManager.getSessionCount(auth.tenantId)}`);
+      log.info(`[WS] Client connected — tenant: ${auth.tenantId}, sessions: ${wsSessionManager.getSessionCount(auth.tenantId)}`);
     });
   });
 
   server.listen(PORT, () => {
-    log('info', `Claw gateway listening on port ${PORT}`);
-    log('info', 'Ready. Endpoints:');
-    log('info', `  GET  http://localhost:${PORT}/health`);
-    log('info', `  POST http://localhost:${PORT}/v1/messages  (JWT required)`);
-    log('info', `  POST http://localhost:${PORT}/v1/approvals/:id  (JWT required)`);
-    log('info', `  GET  http://localhost:${PORT}/v1/tenants/me  (JWT required)`);
-    log('info', `  GET  http://localhost:${PORT}/v1/integrations  (JWT required)`);
-    log('info', `  POST http://localhost:${PORT}/v1/devices  (JWT required — push token registration)`);
-    log('info', `  WSS  ws://localhost:${PORT}/ws?token=<jwt>`);
-    log('info', `  POST http://localhost:${PORT}/message  (legacy, default tenant)`);
-    log('info', `  POST http://localhost:${PORT}/approval  (legacy, default tenant)`);
+    log.info(`Claw gateway listening on port ${PORT}`);
+    log.info('Ready. Endpoints:');
+    log.info(`  GET  http://localhost:${PORT}/health`);
+    log.info(`  POST http://localhost:${PORT}/v1/auth/apple`);
+    log.info(`  POST http://localhost:${PORT}/v1/auth/google`);
+    log.info(`  POST http://localhost:${PORT}/v1/auth/refresh`);
+    log.info(`  POST http://localhost:${PORT}/v1/auth/revoke   (JWT required)`);
+    log.info(`  POST http://localhost:${PORT}/v1/messages  (JWT required)`);
+    log.info(`  POST http://localhost:${PORT}/v1/approvals/:id  (JWT required)`);
+    log.info(`  GET  http://localhost:${PORT}/v1/tenants/me  (JWT required)`);
+    log.info(`  GET  http://localhost:${PORT}/v1/integrations  (JWT required)`);
+    log.info(`  POST http://localhost:${PORT}/v1/devices  (JWT required — push token registration)`);
+    log.info(`  WSS  ws://localhost:${PORT}/ws  (Sec-WebSocket-Protocol: bearer.<token>)`);
+    log.info(`  POST http://localhost:${PORT}/message  (legacy, default tenant)`);
+    log.info(`  POST http://localhost:${PORT}/approval  (legacy, default tenant)`);
   });
 
   // ─── Graceful Shutdown ───
-  const shutdown = (signal: string) => {
-    log('info', `${signal} received — shutting down gracefully...`);
+  const SHUTDOWN_DRAIN_MS = 30_000;
+
+  const shutdown = async (signal: string): Promise<void> => {
+    log.info(`${signal} received — shutting down gracefully...`);
     // 1. Stop BullMQ workers (no new jobs start) + node-cron schedulers
-    void tenantRegistry.stopAll().then(() => {
-      // 2. Stop accepting new WS connections
-      wss.close();
-      // 3. Stop accepting new HTTP connections; wait for in-flight requests
-      server.close(async () => {
-        // 4. Close Redis connections
-        if (redisClient) {
-          await redisClient.quit().catch(() => {});
-        }
-        // 5. Close PG pool
-        await closePool().catch(() => {});
-        log('info', 'Gateway closed.');
-        process.exit(0);
+    await tenantRegistry.stopAll().catch(() => {});
+    // 2. Stop accepting new WS connections
+    wss.close();
+    // 3. Drain in-flight HTTP with 30s timeout — prevents hanging shutdown
+    await new Promise<void>(resolve => {
+      const drainTimer = setTimeout(() => {
+        log.warn('[Shutdown] Drain timeout exceeded — forcing close');
+        resolve();
+      }, SHUTDOWN_DRAIN_MS);
+      server.close(() => {
+        clearTimeout(drainTimer);
+        resolve();
       });
     });
+    // 4. Close Redis connections
+    if (redisClient) {
+      await redisClient.quit().catch(() => {});
+    }
+    // 5. Close PG pool
+    await closePool().catch(() => {});
+    log.info('Gateway closed.');
+    process.exit(0);
   };
 
-  process.on('SIGTERM', () => shutdown('SIGTERM'));
-  process.on('SIGINT', () => shutdown('SIGINT'));
+  process.on('SIGTERM', () => void shutdown('SIGTERM'));
+  process.on('SIGINT', () => void shutdown('SIGINT'));
 
   process.on('uncaughtException', err => {
-    log('error', 'Uncaught exception:', err);
+    log.error('Uncaught exception', { error: (err as Error).message, stack: (err as Error).stack });
   });
 }
 
@@ -858,6 +1064,6 @@ async function setIntegrationEnabled(configPath: string, integrationId: string):
 }
 
 bootstrap().catch(err => {
-  console.error('Fatal startup error:', err);
+  log.error('Fatal startup error', { error: (err as Error).message, stack: (err as Error).stack });
   process.exit(1);
 });

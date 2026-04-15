@@ -1,4 +1,5 @@
 import pg from 'pg';
+import log from '../utils/logger.js';
 
 const { Pool } = pg;
 
@@ -19,7 +20,7 @@ export function getPool(): pg.Pool {
     });
 
     _pool.on('error', (err) => {
-      console.error('[DB] Pool error:', err.message);
+      log.error('[DB] Pool error', { error: err.message });
     });
   }
   return _pool;
@@ -33,7 +34,7 @@ export async function query<T extends pg.QueryResultRow = pg.QueryResultRow>(
   try {
     return await pool.query<T>(sql, params);
   } catch (err) {
-    console.error('[DB] Query error:', (err as Error).message, '\nSQL:', sql.slice(0, 200));
+    log.error('[DB] Query error', { error: (err as Error).message, sql: sql.slice(0, 200) });
     throw err;
   }
 }

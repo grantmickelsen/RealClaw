@@ -3,6 +3,7 @@ import { calculateCost } from '../cost-calculator.js';
 import { readSseLines } from '../sse-reader.js';
 import type { LlmRequest, LlmResponse, LlmToolCall, ProviderConfig } from '../types.js';
 import { LlmProviderId } from '../types.js';
+import log from '../../utils/logger.js';
 
 /**
  * ManifestProvider routes every request through Manifest's smart routing layer
@@ -126,11 +127,11 @@ export class ManifestProvider extends LlmProvider {
         : {};
       const response = await fetch(`${this.baseUrl}/api/v1/health`, { headers });
       if (!response.ok) {
-        console.warn(`[Manifest] Health check failed: ${response.status} ${await response.text()}`);
+        log.warn(`[Manifest] Health check failed: ${response.status}`);
       }
       return response.ok;
     } catch (err) {
-      console.warn(`[Manifest] Health check error: ${(err as Error).message}`);
+      log.warn('[Manifest] Health check error', { error: (err as Error).message });
       return false;
     }
   }

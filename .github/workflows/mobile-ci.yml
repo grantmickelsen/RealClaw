@@ -1,0 +1,105 @@
+name: Mobile CI
+
+on:
+  push:
+    branches: ['**']
+    paths:
+      - 'apps/mobile/**'
+      - 'packages/types/**'
+  pull_request:
+    branches: [main]
+
+jobs:
+  test:
+    name: Mobile Unit Tests
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Run mobile unit tests
+      working-directory: apps/mobile
+      run: npm test -- --ci --passWithNoTests
+
+  ota-gate:
+    name: OTA Safety Gate
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - name: Export JS bundle
+      working-directory: apps/mobile
+      run: npx expo export --platform ios --output-dir /tmp/bundle
+
+    - name: OTA safety check (blocks native changes from bypassing App Store review)
+      run: node scripts/check-ota-safety.mjs /tmp/bundle
+
+  eas-update-staging:
+    name: EAS Update — Staging Channel
+    needs: ota-gate
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - uses: expo/expo-github-action@v8
+      with:
+        eas-version: latest
+        token: ${{ secrets.EXPO_TOKEN }}
+
+    - name: Publish staging OTA update
+      working-directory: apps/mobile
+      run: eas update --channel staging --message "sha=${{ github.sha }}"
+
+  eas-build-preview:
+    name: EAS Build — Preview (PR only)
+    needs: test
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    - name: Install dependencies
+      run: npm ci
+
+    - uses: expo/expo-github-action@v8
+      with:
+        eas-version: latest
+        token: ${{ secrets.EXPO_TOKEN }}
+
+    - name: EAS preview build (all platforms)
+      working-directory: apps/mobile
+      run: eas build --platform all --profile preview --non-interactive

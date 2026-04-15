@@ -13,6 +13,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import pg from 'pg';
+import log from '../utils/logger.js';
 
 const { Client } = pg;
 
@@ -28,7 +29,7 @@ async function run(): Promise<void> {
   const client = new Client({ connectionString });
   await client.connect();
 
-  console.log('[migrate] Connected to database');
+  log.info('[migrate] Connected to database');
 
   try {
     // Ensure the tracking table exists (idempotent bootstrap)
@@ -53,7 +54,7 @@ async function run(): Promise<void> {
         [migrationId],
       );
       if (rows.length > 0) {
-        console.log(`[migrate] Skip  ${migrationId} (already applied)`);
+        log.info(`[migrate] Skip  ${migrationId} (already applied)`);
         continue;
       }
 
@@ -67,20 +68,20 @@ async function run(): Promise<void> {
           [migrationId],
         );
         await client.query('COMMIT');
-        console.log(`[migrate] Apply ${migrationId}`);
+        log.info(`[migrate] Apply ${migrationId}`);
       } catch (err) {
         await client.query('ROLLBACK');
         throw new Error(`Migration ${migrationId} failed: ${(err as Error).message}`);
       }
     }
 
-    console.log('[migrate] Done');
+    log.info('[migrate] Done');
   } finally {
     await client.end();
   }
 }
 
 run().catch(err => {
-  console.error('[migrate] Fatal:', err.message);
+  log.error('[migrate] Fatal', { error: err.message });
   process.exit(1);
 });

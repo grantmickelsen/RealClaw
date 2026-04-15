@@ -1,6 +1,7 @@
 import fs from 'fs/promises';
 import { v4 as uuidv4 } from 'uuid';
 import type { AgentConfig } from '../types/agents.js';
+import log from '../utils/logger.js';
 import { AgentId, ModelTier } from '../types/agents.js';
 import type {
   TaskRequest,
@@ -76,7 +77,7 @@ export abstract class BaseAgent {
     for (const eventType of this.config.subscribesTo) {
       this.eventBus.subscribe(eventType, event => {
         this.onEvent(event.eventType, event.payload).catch(err => {
-          console.error(`[${this.id}] Event handler error:`, err);
+          log.error(`[${this.id}] Event handler error`, { error: (err as Error).message });
         });
       });
     }

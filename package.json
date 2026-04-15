@@ -4,6 +4,10 @@
   "description": "RealEstate OpenClaw Executive Assistant",
   "private": true,
   "type": "module",
+  "workspaces": [
+    "apps/mobile",
+    "packages/types"
+  ],
   "scripts": {
     "build": "tsc --project tsconfig.json",
     "start": "node dist/index.js",
@@ -16,7 +20,8 @@
     "test:e2e": "vitest run tests/e2e",
     "lint": "tsc --noEmit",
     "setup": "tsx src/setup/cli.ts",
-    "migrate": "tsx src/db/migrate.ts"
+    "migrate": "tsx src/db/migrate.ts",
+    "sync-types": "cp src/types/messages.ts packages/types/src/messages.ts && cp src/types/agents.ts packages/types/src/agents.ts && cp src/types/integrations.ts packages/types/src/integrations.ts && cp src/types/events.ts packages/types/src/events.ts && cp src/types/ws.ts packages/types/src/ws.ts"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.52.0",

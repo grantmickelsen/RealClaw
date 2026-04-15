@@ -1,4 +1,5 @@
 import { Expo, type ExpoPushMessage } from 'expo-server-sdk';
+import log from '../utils/logger.js';
 
 type QueryFn = (sql: string, params?: unknown[]) => Promise<{ rows: Record<string, unknown>[] }>;
 
@@ -44,7 +45,7 @@ export class PushNotificationService {
       try {
         await this.expo.sendPushNotificationsAsync(chunk);
       } catch (err) {
-        console.error('[Push] Failed to send chunk:', err);
+        log.error('[Push] Failed to send chunk', { error: (err as Error).message });
       }
     }
   }

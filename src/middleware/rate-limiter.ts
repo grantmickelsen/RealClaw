@@ -1,6 +1,7 @@
 import { randomUUID } from 'crypto';
 import type { IntegrationId } from '../types/integrations.js';
 import type { Redis } from 'ioredis';
+import log from '../utils/logger.js';
 
 interface WindowEntry {
   timestamps: number[];       // Call timestamps in the current window
@@ -55,7 +56,7 @@ export class RateLimiter implements IRateLimiter {
 
     // Log warning at 80% capacity
     if (!entry.warningLogged && remaining <= Math.ceil(limit * 0.2)) {
-      console.warn(`[RateLimiter] ${integrationId} at ${Math.floor((entry.timestamps.length / limit) * 100)}% capacity`);
+      log.warn(`[RateLimiter] ${integrationId} at ${Math.floor((entry.timestamps.length / limit) * 100)}% capacity`);
       entry.warningLogged = true;
     } else if (remaining > Math.ceil(limit * 0.2)) {
       entry.warningLogged = false; // Reset warning flag when usage drops

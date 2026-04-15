@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: realclaw-config
+  namespace: realclaw
+data:
+  NODE_ENV: "production"
+  OPENCLAW_GATEWAY_PORT: "18789"
+  OPENCLAW_LOG_LEVEL: "info"
+  CLAW_MEMORY_PATH: "/opt/claw/memory"
+  JWT_ISSUER: "realclaw"
+---
+# Application-level config mounted as a volume (agents.json, heartbeat.json, etc.)
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: realclaw-app-config
+  namespace: realclaw
+data: {}
+# Populated by the deployment pipeline with tenant config files.
+# Individual files mounted under /opt/claw/config/

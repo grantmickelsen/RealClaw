@@ -1,6 +1,7 @@
 import type { Redis } from 'ioredis';
 import type { EventType, SystemEvent } from '../../types/events.js';
 import { EventBus, type EventHandler, type IEventBus } from './event-bus.js';
+import log from '../../utils/logger.js';
 
 /**
  * Redis Pub/Sub-backed EventBus.
@@ -30,7 +31,7 @@ export class RedisEventBus implements IEventBus {
   emit(event: SystemEvent): void {
     const channel = `${this.prefix}${event.eventType}`;
     this.pub.publish(channel, JSON.stringify(event)).catch(err => {
-      console.error('[RedisEventBus] Publish failed:', err);
+      log.error('[RedisEventBus] Publish failed', { error: (err as Error).message });
     });
   }
 
@@ -39,7 +40,7 @@ export class RedisEventBus implements IEventBus {
       this.handlers.set(eventType, new Set());
       // Subscribe to the Redis channel for this event type
       this.sub.subscribe(`${this.prefix}${eventType}`).catch(err => {
-        console.error(`[RedisEventBus] Subscribe failed for ${eventType}:`, err);
+        log.error(`[RedisEventBus] Subscribe failed for ${eventType}`, { error: (err as Error).message });
       });
     }
     this.handlers.get(eventType)!.add(handler);
@@ -73,7 +74,7 @@ export class RedisEventBus implements IEventBus {
     try {
       event = JSON.parse(message) as SystemEvent;
     } catch {
-      console.error('[RedisEventBus] Failed to parse event from channel:', channel);
+      log.error('[RedisEventBus] Failed to parse event from channel', { channel });
       return;
     }
 
@@ -81,7 +82,7 @@ export class RedisEventBus implements IEventBus {
       Promise.resolve()
         .then(() => handler(event))
         .catch(err => {
-          console.error(`[RedisEventBus] Handler error for ${eventType}:`, err);
+          log.error(`[RedisEventBus] Handler error for ${eventType}`, { error: (err as Error).message });
         });
     }
   }

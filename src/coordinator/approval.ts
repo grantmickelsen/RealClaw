@@ -6,6 +6,7 @@ import type {
   ApprovalResponse,
   ApprovalItem,
 } from '../types/messages.js';
+import log from '../utils/logger.js';
 
 interface PendingApprovals {
   [approvalId: string]: ApprovalRequest;
@@ -72,12 +73,12 @@ export class ApprovalManager {
   async processApprovalResponse(response: ApprovalResponse): Promise<void> {
     const request = this.pending.get(response.approvalId);
     if (!request) {
-      console.warn(`[Approval] Unknown approval ID: ${response.approvalId}`);
+      log.warn(`[Approval] Unknown approval ID: ${response.approvalId}`);
       return;
     }
 
     if (new Date(request.expiresAt) < new Date()) {
-      console.warn(`[Approval] Approval ${response.approvalId} has expired`);
+      log.warn(`[Approval] Approval ${response.approvalId} has expired`);
       this.cleanup(response.approvalId);
       return;
     }
@@ -93,7 +94,7 @@ export class ApprovalManager {
       await this.queryFn(
         `UPDATE approvals SET status = 'completed' WHERE approval_id = $1`,
         [response.approvalId],
-      ).catch(err => console.error('[Approval] DB update failed:', err));
+      ).catch(err => log.error('[Approval] DB update failed', { error: (err as Error).message }));
     }
 
     await this.persistPending();
@@ -155,7 +156,7 @@ export class ApprovalManager {
         this.scheduleTimers(request);
       }
     } catch (err) {
-      console.error('[Approval] DB load failed, starting fresh:', err);
+      log.error('[Approval] DB load failed, starting fresh', { error: (err as Error).message });
     }
   }
 
@@ -181,7 +182,7 @@ export class ApprovalManager {
          VALUES ($1, $2, $3::jsonb, 'pending', $4)
          ON CONFLICT (approval_id) DO UPDATE SET items = $3::jsonb, status = 'pending'`,
         [approvalId, this.tenantId, JSON.stringify(request.batch), request.expiresAt],
-      ).catch(err => console.error('[Approval] DB persist failed:', err));
+      ).catch(err => log.error('[Approval] DB persist failed', { error: (err as Error).message }));
     }
   }
 
@@ -192,14 +193,14 @@ export class ApprovalManager {
 
     if (reminderMs < expiresMs) {
       const reminderTimer = setTimeout(() => {
-        console.log(`[Approval] Reminder: approval ${request.approvalId} still pending`);
+        log.info(`[Approval] Reminder: approval ${request.approvalId} still pending`);
       }, reminderMs - now);
       this.reminderTimers.set(request.approvalId, reminderTimer);
     }
 
     const timeUntilExpiry = Math.max(0, expiresMs - now);
     const expiryTimer = setTimeout(() => {
-      console.log(`[Approval] Expired: approval ${request.approvalId}`);
+      log.info(`[Approval] Expired: approval ${request.approvalId}`);
       this.cleanup(request.approvalId);
       this.persistPending().catch(() => {});
     }, timeUntilExpiry);

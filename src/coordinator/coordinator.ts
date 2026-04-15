@@ -1,6 +1,7 @@
 import { v4 as uuidv4 } from 'uuid';
 import fs from 'fs/promises';
 import { AgentId, AGENT_CONFIGS, Priority, ModelTier } from '../types/agents.js';
+import log from '../utils/logger.js';
 import type {
   InboundMessage,
   TaskRequest,
@@ -103,7 +104,7 @@ export class Coordinator {
         };
 
         await this.dispatcher.dispatchSingle(item.originatingAgent, taskRequest).catch(err => {
-          console.error('[Coordinator] Failed to execute approved action:', err);
+          log.error('[Coordinator] Failed to execute approved action', { error: (err as Error).message });
         });
       }
     });
@@ -135,7 +136,7 @@ export class Coordinator {
     if (clientRaw) {
       this.clientConfig = JSON.parse(clientRaw) as ClientConfig;
     } else {
-      console.warn(`[Coordinator:${this.tenantId}] No client.json found`);
+      log.warn(`[Coordinator:${this.tenantId}] No client.json found`);
     }
 
     // Load agents config for routing
@@ -143,13 +144,13 @@ export class Coordinator {
     if (agentsRaw) {
       this.clawRouter.setConfig(JSON.parse(agentsRaw));
     } else {
-      console.warn(`[Coordinator:${this.tenantId}] No agents.json found`);
+      log.warn(`[Coordinator:${this.tenantId}] No agents.json found`);
     }
 
     // Load approval config (currently informational — ApprovalManager uses constructor defaults)
     const approvalRaw = await readConfig('approval-gates.json');
     if (!approvalRaw) {
-      console.warn(`[Coordinator:${this.tenantId}] No approval-gates.json found`);
+      log.warn(`[Coordinator:${this.tenantId}] No approval-gates.json found`);
     }
 
     await this.approvalManager.loadFromDisk();
@@ -166,12 +167,12 @@ export class Coordinator {
   }
 
   async handleInbound(message: InboundMessage, signal?: AbortSignal): Promise<void> {
-    console.log(`[Coordinator] Inbound from ${message.platform}/${message.channelId}: "${message.content.text.slice(0, 80)}"`);
+    log.info(`[Coordinator] Inbound from ${message.platform}/${message.channelId}: "${message.content.text.slice(0, 80)}"`);
 
     // Sanitize input
     const sanitized = sanitize(message.content.text);
     if (sanitized.flagged) {
-      console.warn(`[Coordinator] Input flagged: ${sanitized.flagReason}`);
+      log.warn(`[Coordinator] Input flagged: ${sanitized.flagReason}`);
       await this.auditLogger.log({
         logId: uuidv4(),
         timestamp: new Date().toISOString(),
@@ -192,10 +193,10 @@ export class Coordinator {
 
     // Classify intent and route
     const decision = await this.clawRouter.classifyIntent(sanitizedMessage);
-    console.log(`[Coordinator] Intent: ${decision.intent} (${(decision.confidence * 100).toFixed(0)}%) → ${decision.dispatchMode} → [${decision.targets.join(', ')}]`);
+    log.info(`[Coordinator] Intent: ${decision.intent} (${(decision.confidence * 100).toFixed(0)}%) → ${decision.dispatchMode} → [${decision.targets.join(', ')}]`);
 
     if (decision.intent === 'clarify') {
-      console.log(`[Coordinator] Sending clarifying question`);
+      log.info(`[Coordinator] Sending clarifying question`);
       await this.reply(message, decision.clarifyingQuestion ?? 'Could you clarify your request?');
       return;
     }
@@ -269,7 +270,7 @@ export class Coordinator {
           break;
       }
     } catch (err) {
-      console.error(`[Coordinator] Dispatch error: ${(err as Error).message}`);
+      log.error(`[Coordinator] Dispatch error`, { error: (err as Error).message });
       await this.reply(
         message,
         `I encountered an error: ${(err as Error).message}. Please try again.`,
@@ -278,7 +279,7 @@ export class Coordinator {
     }
 
     const successCount = results.filter(r => r.status !== 'failed').length;
-    console.log(`[Coordinator] Dispatch complete: ${successCount}/${results.length} succeeded in ${Date.now() - dispatchStart}ms`);
+    log.info(`[Coordinator] Dispatch complete: ${successCount}/${results.length} succeeded in ${Date.now() - dispatchStart}ms`);
 
     // Handle approvals
     const approvalItems = this.synthesizer.extractPendingApprovals(results);
@@ -343,7 +344,7 @@ export class Coordinator {
           };
           await this.dispatcher.dispatchSingle(sideEffect.targetAgent, request);
         } catch (err) {
-          console.error(`[Coordinator] Side effect failed:`, err);
+          log.error(`[Coordinator] Side effect failed`, { error: (err as Error).message });
         }
       }
     }
@@ -400,7 +401,7 @@ export class Coordinator {
       correlationId: message.correlationId,
     };
     const payload = formatOutbound(message.platform, outbound);
-    console.log(`[Coordinator] Reply to ${message.platform}/${message.channelId}: "${text.slice(0, 120)}${text.length > 120 ? '…' : ''}"`);
+    log.info(`[Coordinator] Reply to ${message.platform}/${message.channelId}: "${text.slice(0, 120)}${text.length > 120 ? '…' : ''}"`);
     await this.sendMessage?.(message.platform, message.channelId, payload, message.correlationId);
   }
 }

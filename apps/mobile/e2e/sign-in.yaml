@@ -1,0 +1,38 @@
+# Maestro e2e flow: Sign In
+# Tests the authentication flow from cold launch to the chat screen.
+#
+# Prerequisites:
+#   - App is running in simulator/emulator
+#   - Backend is running at http://localhost:18789 (dev mode)
+#   - A test user exists with valid credentials
+#
+# Run: maestro test e2e/sign-in.yaml
+
+appId: com.realclaw.app
+
+---
+- launchApp:
+    clearState: true  # Fresh start, no stored tokens
+
+# Verify sign-in screen is displayed
+- assertVisible: "RealClaw"
+- assertVisible: "Sign in with Apple"
+
+# ── iOS: Sign in with Apple ──
+# In a simulator test environment, Apple Sign In returns a test credential
+- tapOn: "Sign in with Apple"
+
+# Wait for the OAuth flow to complete and navigate to main tabs
+- waitForAnimationToEnd
+- assertVisible:
+    id: "chat-tab"
+    timeout: 10000
+
+# Verify we landed on the Chat screen
+- assertVisible: "Ask Claw anything…"
+
+# Verify the tab bar shows all 3 tabs
+- assertVisible:
+    id: "contacts-tab"
+- assertVisible:
+    id: "settings-tab"

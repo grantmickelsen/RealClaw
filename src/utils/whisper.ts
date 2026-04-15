@@ -3,6 +3,7 @@ import { promisify } from 'util';
 import fs from 'fs/promises';
 import path from 'path';
 import os from 'os';
+import log from './logger.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -52,9 +53,9 @@ export async function transcribeAudio(audioPath: string): Promise<string | null>
     // Whisper not available — return null rather than crashing
     const message = (err as Error).message ?? '';
     if (message.includes('not found') || message.includes('ENOENT')) {
-      console.warn('[Whisper] Whisper CLI not available. Audio transcription disabled.');
+      log.warn('[Whisper] Whisper CLI not available. Audio transcription disabled.');
     } else {
-      console.error('[Whisper] Transcription failed:', message);
+      log.error('[Whisper] Transcription failed', { error: message });
     }
     return null;
   } finally {

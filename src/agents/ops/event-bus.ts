@@ -1,4 +1,5 @@
 import type { EventType, SystemEvent } from '../../types/events.js';
+import log from '../../utils/logger.js';
 
 export type EventHandler = (event: SystemEvent) => void | Promise<void>;
 
@@ -22,10 +23,7 @@ export class EventBus implements IEventBus {
       Promise.resolve()
         .then(() => handler(event))
         .catch(err => {
-          console.error(
-            `[EventBus] Handler error for event ${event.eventType}:`,
-            err,
-          );
+          log.error(`[EventBus] Handler error for event ${event.eventType}`, { error: (err as Error).message });
           // Failed handler does not block others
         });
     }

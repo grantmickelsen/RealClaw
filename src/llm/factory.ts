@@ -1,5 +1,6 @@
 import fs from 'fs/promises';
 import type { ModelRoutingConfig, ProviderConfig } from './types.js';
+import log from '../utils/logger.js';
 import { LlmProviderId } from './types.js';
 import type { LlmProvider } from './provider.js';
 import { LlmRouter } from './router.js';
@@ -59,7 +60,7 @@ function buildProvider(config: ProviderConfig): LlmProvider | null {
     case LlmProviderId.MANIFEST:
       return new ManifestProvider(config);
     default:
-      console.warn(`Unknown provider ID: ${config.id}`);
+      log.warn(`Unknown provider ID: ${config.id}`);
       return null;
   }
 }

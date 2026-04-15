@@ -1,0 +1,86 @@
+# PostgreSQL — staging deployment.
+# Production: use AWS RDS or Supabase (not this manifest).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres
+  namespace: realclaw
+  labels:
+    app: postgres
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres
+  template:
+    metadata:
+      labels:
+        app: postgres
+    spec:
+      containers:
+      - name: postgres
+        image: postgres:16-alpine
+        env:
+        - name: POSTGRES_DB
+          value: realclaw
+        - name: POSTGRES_USER
+          value: realclaw
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: realclaw-secrets
+              key: POSTGRES_PASSWORD
+        ports:
+        - containerPort: 5432
+        resources:
+          requests:
+            cpu: "200m"
+            memory: "256Mi"
+          limits:
+            cpu: "1000m"
+            memory: "1Gi"
+        readinessProbe:
+          exec:
+            command: ["pg_isready", "-U", "realclaw"]
+          initialDelaySeconds: 5
+          periodSeconds: 5
+          failureThreshold: 5
+        livenessProbe:
+          exec:
+            command: ["pg_isready", "-U", "realclaw"]
+          initialDelaySeconds: 30
+          periodSeconds: 20
+          failureThreshold: 3
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql/data
+      volumes:
+      - name: postgres-data
+        persistentVolumeClaim:
+          claimName: postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres
+  namespace: realclaw
+  labels:
+    app: postgres
+spec:
+  selector:
+    app: postgres
+  ports:
+  - port: 5432
+    targetPort: 5432
+  type: ClusterIP
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: postgres-data
+  namespace: realclaw
+spec:
+  accessModes: [ReadWriteOnce]
+  resources:
+    requests:
+      storage: 20Gi

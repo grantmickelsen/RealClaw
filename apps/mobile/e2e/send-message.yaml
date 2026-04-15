@@ -1,0 +1,52 @@
+# Maestro e2e flow: Send a Message
+# Tests the full message round-trip: user types → sends → sees streaming response.
+#
+# Prerequisites:
+#   - Backend running at http://localhost:18789
+#   - Already authenticated (run sign-in.yaml first, or use a pre-seeded token state)
+#
+# Run: maestro test e2e/send-message.yaml
+
+appId: com.realclaw.app
+
+---
+- launchApp
+
+# Navigate to the Chat tab if not already there
+- tapOn:
+    id: "chat-tab"
+
+# Wait for chat screen to be ready
+- assertVisible: "Ask Claw anything…"
+
+# ── Compose and send a message ──
+- tapOn: "Ask Claw anything…"
+- inputText: "What are the current market conditions for single-family homes in zip 90210?"
+
+# Verify the send button becomes active and text appears in the input
+- assertVisible: "What are the current market conditions"
+
+- tapOn:
+    id: "send-button"
+
+# Input should clear after send
+- assertNotVisible: "What are the current market conditions for single-family homes"
+
+# ── Verify the user message appears in the chat ──
+- assertVisible: "What are the current market conditions for single-family homes in zip 90210?"
+
+# ── Verify the assistant starts responding (streaming indicator) ──
+- assertVisible:
+    text: "Claw is thinking"
+    optional: true  # May appear briefly before streaming starts
+    timeout: 5000
+
+# Wait for the response to complete (streaming dots disappear, text is shown)
+# Research queries can take up to 30 seconds
+- waitForAnimationToEnd:
+    timeout: 30000
+
+# Verify a non-empty response exists (exact text is dynamic — just check role indicator)
+- assertVisible:
+    id: "assistant-message"
+    timeout: 35000

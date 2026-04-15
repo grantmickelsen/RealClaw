@@ -2,6 +2,7 @@ import cron from 'node-cron';
 import { v4 as uuidv4 } from 'uuid';
 import type { HeartbeatTrigger } from '../../types/messages.js';
 import type { AgentId } from '../../types/agents.js';
+import log from '../../utils/logger.js';
 
 interface HeartbeatSchedule {
   name: string;
@@ -34,7 +35,7 @@ export class HeartbeatScheduler {
       if (schedule.enabled === false) continue;
 
       if (!cron.validate(schedule.cron)) {
-        console.warn(`[Heartbeat] Invalid cron expression for "${schedule.name}": ${schedule.cron}`);
+        log.warn(`[Heartbeat] Invalid cron expression for "${schedule.name}": ${schedule.cron}`);
         continue;
       }
 
@@ -55,7 +56,7 @@ export class HeartbeatScheduler {
           try {
             await this.handler(trigger);
           } catch (err) {
-            console.error(`[Heartbeat] Trigger "${schedule.name}" failed:`, err);
+            log.error(`[Heartbeat] Trigger "${schedule.name}" failed`, { error: (err as Error).message });
           }
         },
         {
@@ -65,7 +66,7 @@ export class HeartbeatScheduler {
       );
 
       this.tasks.set(schedule.name, task);
-      console.log(`[Heartbeat] Scheduled "${schedule.name}" at "${schedule.cron}" (${config.timezone})`);
+      log.info(`[Heartbeat] Scheduled "${schedule.name}" at "${schedule.cron}" (${config.timezone})`);
     }
   }
 

@@ -1,0 +1,59 @@
+# Maestro e2e flow: Approval — Draft Email
+# Tests the approval flow: agent drafts an email → approval card appears →
+# user biometrically confirms → approval is submitted.
+#
+# Prerequisites:
+#   - Backend running with a test tenant that has Gmail connected
+#   - Already authenticated
+#   - Biometric auth is bypassed in the test build via TEST_BIOMETRIC_BYPASS=true env var
+#     (BiometricGate reads this flag and auto-approves in test mode)
+#
+# Run: maestro test e2e/approve-email.yaml
+
+appId: com.realclaw.app
+
+---
+- launchApp
+
+- tapOn:
+    id: "chat-tab"
+
+- assertVisible: "Ask Claw anything…"
+
+# ── Trigger an action that requires approval (draft email) ──
+- tapOn: "Ask Claw anything…"
+- inputText: "Send an email to john@example.com saying I'd like to schedule a showing for 123 Main St"
+- tapOn:
+    id: "send-button"
+
+# Wait for the agent to generate the approval request
+# Email drafting typically takes 5–15 seconds
+- waitForAnimationToEnd:
+    timeout: 20000
+
+# ── Approval card should appear inline in the chat ──
+- assertVisible:
+    id: "approval-card"
+    timeout: 20000
+
+# Verify the draft preview is shown
+- assertVisible: "john@example.com"
+
+# ── Approve the action ──
+# In test builds, the biometric gate is bypassed via TEST_BIOMETRIC_BYPASS=true
+- tapOn:
+    id: "approve-button"
+
+# Wait for the approval to be processed
+- waitForAnimationToEnd:
+    timeout: 10000
+
+# ── Verify the approval was processed ──
+# The approval card should be replaced with a success confirmation
+- assertVisible:
+    id: "approval-success"
+    timeout: 10000
+
+# The message should now show "done" status (no spinner)
+- assertNotVisible:
+    id: "streaming-indicator"

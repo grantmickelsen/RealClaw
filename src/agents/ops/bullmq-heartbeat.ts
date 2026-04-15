@@ -3,6 +3,7 @@ import { createHash } from 'crypto';
 import { randomUUID } from 'crypto';
 import type { HeartbeatTrigger } from '../../types/messages.js';
 import type { AgentId } from '../../types/agents.js';
+import log from '../../utils/logger.js';
 
 // Re-export the same interfaces used by the node-cron scheduler for drop-in compatibility
 interface HeartbeatSchedule {
@@ -136,11 +137,11 @@ export class BullMqHeartbeatScheduler {
     );
 
     worker.on('failed', (job, err) => {
-      console.error(`[BullMQ] Heartbeat job "${job?.name}" failed:`, err.message);
+      log.error(`[BullMQ] Heartbeat job "${job?.name}" failed`, { error: err.message });
     });
 
     this.workers.set(tenantId, worker);
-    console.log(`[BullMQ] Loaded ${config.schedules.filter(s => s.enabled !== false).length} schedules for tenant "${tenantId}" (jitter: ${jitterSec}s)`);
+    log.info(`[BullMQ] Loaded ${config.schedules.filter(s => s.enabled !== false).length} schedules for tenant "${tenantId}" (jitter: ${jitterSec}s)`);
   }
 
   async stopForTenant(tenantId: string): Promise<void> {

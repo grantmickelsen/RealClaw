@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: gateway
+  namespace: realclaw
+spec:
+  selector:
+    matchLabels:
+      app: gateway
+  # Node drain / rolling update cannot reduce running pods below 2.
+  # Ensures at least 2 pods are always available for traffic during maintenance.
+  minAvailable: 2

@@ -1,0 +1,129 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: gateway
+  namespace: realclaw
+  labels:
+    app: gateway
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: gateway
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1   # Never below 2 pods during rollout (with PDB minAvailable: 2)
+      maxSurge: 1         # At most 4 pods during rollout
+  template:
+    metadata:
+      labels:
+        app: gateway
+    spec:
+      # 40s = 30s drain timeout + 10s preStop sleep + 5s buffer
+      terminationGracePeriodSeconds: 40
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001   # 'claw' user from Dockerfile
+        fsGroup: 1001
+
+      initContainers:
+      - name: migrate
+        image: ghcr.io/gmickelsen3/realclaw-backend:${IMAGE_TAG}
+        command: ["node", "dist/db/migrate.js"]
+        envFrom:
+        - configMapRef:
+            name: realclaw-config
+        - secretRef:
+            name: realclaw-secrets
+        resources:
+          requests:
+            cpu: "100m"
+            memory: "128Mi"
+          limits:
+            cpu: "500m"
+            memory: "256Mi"
+
+      containers:
+      - name: gateway
+        image: ghcr.io/gmickelsen3/realclaw-backend:${IMAGE_TAG}
+        command: ["node", "dist/index.js"]
+        ports:
+        - containerPort: 18789
+          name: http
+        envFrom:
+        - configMapRef:
+            name: realclaw-config
+        - secretRef:
+            name: realclaw-secrets
+        resources:
+          requests:
+            cpu: "250m"
+            memory: "512Mi"
+          limits:
+            cpu: "2000m"
+            memory: "2Gi"
+
+        # Fast liveness probe — checks only event loop responsiveness.
+        # Never calls external deps so a Redis/DB blip won't cause cascading restarts.
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: 18789
+          initialDelaySeconds: 15
+          periodSeconds: 20
+          failureThreshold: 3
+          timeoutSeconds: 5
+
+        # Thorough readiness probe — checks DB + Redis + at least 1 LLM provider.
+        # Pod only receives traffic once all deps are healthy.
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: 18789
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 3
+          timeoutSeconds: 10
+
+        # Startup probe — allows 90s for cold start (DB connect + agent init + LLM health checks).
+        # Prevents liveness probe from killing a slow-starting pod.
+        startupProbe:
+          httpGet:
+            path: /health/live
+            port: 18789
+          failureThreshold: 18   # 18 × 5s = 90s total budget
+          periodSeconds: 5
+
+        volumeMounts:
+        - name: memory-vol
+          mountPath: /opt/claw/memory
+        - name: config-vol
+          mountPath: /opt/claw/config
+          readOnly: true
+
+        lifecycle:
+          preStop:
+            exec:
+              # Give the load balancer 5s to drain connections before SIGTERM is sent.
+              # This prevents 502 errors during rolling updates.
+              command: ["/bin/sh", "-c", "sleep 5"]
+
+      volumes:
+      - name: memory-vol
+        persistentVolumeClaim:
+          claimName: realclaw-memory
+      - name: config-vol
+        configMap:
+          name: realclaw-app-config
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: realclaw-memory
+  namespace: realclaw
+spec:
+  accessModes: [ReadWriteMany]   # RWX required for multi-replica access
+  resources:
+    requests:
+      storage: 10Gi

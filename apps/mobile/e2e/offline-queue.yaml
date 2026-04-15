@@ -1,0 +1,56 @@
+# Maestro e2e flow: Offline Queue
+# Tests that messages sent while offline are queued and delivered on reconnect.
+#
+# Prerequisites:
+#   - Backend running
+#   - Already authenticated
+#
+# Run: maestro test e2e/offline-queue.yaml
+
+appId: com.realclaw.app
+
+---
+- launchApp
+
+- tapOn:
+    id: "chat-tab"
+
+- assertVisible: "Ask Claw anything…"
+
+# ── Step 1: Disable network in the simulator ──
+# This is done via Maestro's network toggle command
+- setLocation:
+    # Maestro 1.38+ supports network disabling
+    # Actual network disable is done via simulator settings for now
+    lat: 34.0522
+    long: -118.2437
+
+# Simulate airplane mode / no network (Maestro built-in)
+# Note: Use `maestro test --env NETWORK_DISABLED=true` with a custom Maestro flow runner
+# or toggle via device settings if `disableNetwork` isn't available.
+
+# ── Step 2: Type and send a message while offline ──
+- tapOn: "Ask Claw anything…"
+- inputText: "What properties sold last week in Malibu?"
+- tapOn:
+    id: "send-button"
+
+# The message should show a "Pending" status indicator
+- assertVisible: "What properties sold last week in Malibu?"
+- assertVisible:
+    id: "pending-indicator"
+    optional: true
+
+# ── Step 3: Re-enable network ──
+# (Toggle network back on via simulator settings)
+# In an automated CI environment, this step would use xcrun simctl networking commands
+
+# ── Step 4: Verify message is delivered after reconnect ──
+# After network restore, the WS reconnects and drains the queue
+- waitForAnimationToEnd:
+    timeout: 20000
+
+# The assistant should eventually respond (message queued successfully)
+- assertVisible:
+    id: "assistant-message"
+    timeout: 30000

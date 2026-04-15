@@ -1,0 +1,32 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: gateway
+  namespace: realclaw
+  annotations:
+    cert-manager.io/cluster-issuer: "letsencrypt-prod"
+    # WebSocket streaming requires long read/send timeouts (LLM token streaming)
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+    nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
+    # Pass WebSocket upgrade headers through to backend
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection "upgrade";
+spec:
+  ingressClassName: nginx
+  tls:
+  - hosts:
+    - api.realclaw.com
+    secretName: realclaw-tls
+  rules:
+  - host: api.realclaw.com
+    http:
+      paths:
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: gateway
+            port:
+              name: http
