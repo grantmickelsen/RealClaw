@@ -55,6 +55,44 @@ describe('normalizeInbound', () => {
   });
 });
 
+describe('normalizeInbound — media attachments', () => {
+  it('guesses audio media type for audio content_type', () => {
+    const raw = {
+      id: 'disc-1',
+      channelId: 'chan-1',
+      content: '',
+      author: { id: 'u1', username: 'user' },
+      attachments: [{ content_type: 'audio/mpeg', filename: 'recording.mp3', size: 1024 }],
+    };
+    const result = normalizeInbound('discord', raw);
+    expect(result.content.media[0]?.type).toBe('audio');
+  });
+
+  it('guesses video media type for video content_type', () => {
+    const raw = {
+      id: 'disc-2',
+      channelId: 'chan-1',
+      content: '',
+      author: { id: 'u1', username: 'user' },
+      attachments: [{ content_type: 'video/mp4', filename: 'clip.mp4', size: 2048 }],
+    };
+    const result = normalizeInbound('discord', raw);
+    expect(result.content.media[0]?.type).toBe('video');
+  });
+
+  it('guesses document type for unknown content_type', () => {
+    const raw = {
+      id: 'disc-3',
+      channelId: 'chan-1',
+      content: '',
+      author: { id: 'u1', username: 'user' },
+      attachments: [{ content_type: 'application/pdf', filename: 'contract.pdf', size: 4096 }],
+    };
+    const result = normalizeInbound('discord', raw);
+    expect(result.content.media[0]?.type).toBe('document');
+  });
+});
+
 describe('normalizeInbound — additional platforms', () => {
   it('normalizes a WhatsApp message', () => {
     const raw = {
@@ -90,6 +128,16 @@ describe('normalizeInbound — additional platforms', () => {
     expect(result.platform).toBe('imessage');
     expect(result.content.text).toBe('Comps for Elm St please');
     expect(result.channelId).toBe('iMessage;+;+16195929468');
+  });
+
+  it('normalizes WhatsApp message with no text content (empty string fallback)', () => {
+    const raw = {
+      key: { remoteJid: '+15551234567', id: 'ABCDEF' },
+      pushName: 'Bob',
+      message: {}, // neither conversation nor extendedTextMessage
+    };
+    const result = normalizeInbound('whatsapp', raw);
+    expect(result.content.text).toBe('');
   });
 
   it('normalizes an unknown platform via generic fallback', () => {

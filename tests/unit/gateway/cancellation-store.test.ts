@@ -39,6 +39,17 @@ describe('InMemoryCancellationStore', () => {
     expect(await store.isCancelled('corr-2')).toBe(false);
   });
 
+  it('TTL timer removes entry after 1 hour', async () => {
+    vi.useFakeTimers();
+    const store = new InMemoryCancellationStore();
+    await store.cancel('corr-ttl');
+    expect(await store.isCancelled('corr-ttl')).toBe(true);
+    // Advance past the 1-hour TTL
+    vi.advanceTimersByTime(3_600_001);
+    expect(await store.isCancelled('corr-ttl')).toBe(false);
+    store.dispose();
+  });
+
   it('multiple different correlation ids are tracked independently', async () => {
     const store = new InMemoryCancellationStore();
     await store.cancel('corr-a');

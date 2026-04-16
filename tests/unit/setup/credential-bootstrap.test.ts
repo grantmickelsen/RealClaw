@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CredentialVault } from '../../../src/credentials/vault.js';
 import { bootstrapCredentialsFromEnv } from '../../../src/setup/credential-bootstrap.js';
 import { IntegrationId } from '../../../src/types/integrations.js';
@@ -88,6 +88,20 @@ describe('bootstrapCredentialsFromEnv', () => {
     expect(result.seeded).toContain(IntegrationId.TWILIO);
     expect(result.seeded).not.toContain(IntegrationId.GMAIL);
     expect(result.failed).toHaveLength(0);
+  });
+
+  it('reports failed when vault.retrieve throws', async () => {
+    process.env.CLAW_TWILIO_ACCOUNT_SID = 'ACtest';
+    process.env.CLAW_TWILIO_AUTH_TOKEN = 'authtoken';
+
+    vi.spyOn(vault, 'retrieve').mockRejectedValue(new Error('disk full'));
+
+    const result = await bootstrapCredentialsFromEnv(vault);
+
+    expect(result.failed.length).toBeGreaterThan(0);
+    expect(result.failed[0]!.error).toContain('disk full');
+
+    vi.restoreAllMocks();
   });
 
   it('google_calendar shares Gmail client credentials', async () => {

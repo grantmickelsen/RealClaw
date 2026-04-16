@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { MemoryManager } from '../../../src/memory/memory-manager.js';
 import { AgentId } from '../../../src/types/agents.js';
 import fs from 'fs/promises';
@@ -119,6 +119,48 @@ describe('MemoryManager', () => {
 
       // After write, lock should be gone
       expect(manager.isLocked('release.md')).toBe(false);
+    });
+
+    it('returns failure result when lock cannot be acquired', async () => {
+      const mockLock = {
+        acquire: vi.fn().mockResolvedValue(null),
+        release: vi.fn(),
+      };
+      const lockedManager = new MemoryManager(tmpDir, undefined, mockLock);
+      const result = await lockedManager.write({
+        path: 'contended.md',
+        operation: 'create',
+        content: 'x',
+        writtenBy: AgentId.OPS,
+      });
+      expect(result.success).toBe(false);
+      expect(result.error).toContain('locked');
+    });
+  });
+
+  describe('onMemoryWrite callback', () => {
+    it('invokes the callback with domain, path, and operation after a successful write', async () => {
+      const callback = vi.fn();
+      manager.onMemoryWrite(callback);
+
+      await manager.write({
+        path: 'contacts/alice.md',
+        operation: 'create',
+        content: 'Alice',
+        writtenBy: AgentId.RELATIONSHIP,
+      });
+
+      expect(callback).toHaveBeenCalledOnce();
+      expect(callback).toHaveBeenCalledWith('contacts', 'contacts/alice.md', 'create');
+    });
+
+    it('does not invoke the callback when lock cannot be acquired', async () => {
+      const mockLock = { acquire: vi.fn().mockResolvedValue(null), release: vi.fn() };
+      const m = new MemoryManager(tmpDir, undefined, mockLock);
+      const callback = vi.fn();
+      m.onMemoryWrite(callback);
+      await m.write({ path: 'x.md', operation: 'create', content: 'x', writtenBy: AgentId.OPS });
+      expect(callback).not.toHaveBeenCalled();
     });
   });
 });

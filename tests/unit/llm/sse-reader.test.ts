@@ -85,4 +85,12 @@ describe('readSseLines', () => {
     const lines = await collect(response);
     expect(lines).toEqual(['hello']);
   });
+
+  it('flushes remaining buffer when stream ends without trailing blank line', async () => {
+    // The last SSE event has only a single \n (not \n\n) — triggers the post-loop flush path
+    const response = makeSseResponse(['data: first\n\ndata: last\n']);
+    const lines = await collect(response);
+    expect(lines).toContain('first');
+    expect(lines).toContain('last');
+  });
 });

@@ -155,4 +155,67 @@ describe('ApprovalManager — DB persistence', () => {
     expect(tenantIds).toContain('tenantA');
     expect(tenantIds).toContain('tenantB');
   });
+
+  it('handles DB load error gracefully without throwing', async () => {
+    queryFn.mockRejectedValue(new Error('Connection refused'));
+    const mgr = new ApprovalManager('t1', '/tmp/memory', undefined, queryFn);
+    await expect(mgr.loadFromDisk()).resolves.toBeUndefined();
+  });
 });
+
+  // ─── processApprovalResponse — expired + DB paths ─────────────────────────
+
+  it('processApprovalResponse ignores an already-expired approval', async () => {
+    const mgr = new ApprovalManager('tenant-exp', '/tmp/memory', undefined, undefined, {
+      approvalTimeout: { defaultMs: 1, reminderAfterMs: 1 },
+      batchThreshold: 5,
+    });
+
+    // Create a request that expires in the past
+    const request = await mgr.createApprovalRequest([makeItem()]);
+
+    // Manually backdate the expiresAt so it looks expired
+    const pending = (mgr as never).pending as Map<string, { expiresAt: string }>;
+    const entry = pending.get(request.approvalId)!;
+    entry.expiresAt = new Date(Date.now() - 10_000).toISOString();
+
+    await mgr.processApprovalResponse({
+      messageId: 'r1',
+      timestamp: new Date().toISOString(),
+      correlationId: 'c1',
+      type: 'APPROVAL_RESPONSE',
+      approvalId: request.approvalId,
+      decision: 'approved',
+      respondedAt: new Date().toISOString(),
+    });
+
+    // Should have been cleaned up — not in pending any more
+    expect(mgr.getPending(request.approvalId)).toBeUndefined();
+  });
+
+  it('processApprovalResponse calls queryFn to mark approval completed in DB', async () => {
+    const qFn = vi.fn().mockResolvedValue({ rows: [] });
+    const mgr = new ApprovalManager('tenant-dbupdate', '/tmp/memory', undefined, qFn, {
+      approvalTimeout: { defaultMs: 60_000, reminderAfterMs: 30_000 },
+      batchThreshold: 5,
+    });
+
+    const request = await mgr.createApprovalRequest([makeItem()]);
+
+    await mgr.processApprovalResponse({
+      messageId: 'r2',
+      timestamp: new Date().toISOString(),
+      correlationId: 'c2',
+      type: 'APPROVAL_RESPONSE',
+      approvalId: request.approvalId,
+      decision: 'approved',
+      respondedAt: new Date().toISOString(),
+    });
+
+    // queryFn should have been called with an UPDATE statement
+    const updateCall = qFn.mock.calls.find(
+      (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('UPDATE'),
+    );
+    expect(updateCall).toBeDefined();
+    expect(updateCall![1]).toContain(request.approvalId);
+  });

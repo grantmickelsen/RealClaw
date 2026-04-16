@@ -108,4 +108,37 @@ describe('ApprovalManager', () => {
 
     expect(callback).not.toHaveBeenCalled();
   });
+
+  it('expiry timer removes approval from pending', async () => {
+    vi.useFakeTimers();
+    try {
+      const items = [makeItem(0)];
+      const request = await approvalManager.createApprovalRequest(items);
+      expect(approvalManager.getPending(request.approvalId)).toBeDefined();
+
+      // Advance past the 200ms expiry (reminderAfterMs: 100, expireAfterMs: 200)
+      await vi.advanceTimersByTimeAsync(300);
+
+      expect(approvalManager.getPending(request.approvalId)).toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('reminder timer fires before expiry without removing approval', async () => {
+    vi.useFakeTimers();
+    try {
+      const items = [makeItem(0)];
+      const request = await approvalManager.createApprovalRequest(items);
+      expect(approvalManager.getPending(request.approvalId)).toBeDefined();
+
+      // Advance past reminder (100ms) but before expiry (200ms)
+      await vi.advanceTimersByTimeAsync(150);
+
+      // Should still be pending — reminder fired but expiry hasn't
+      expect(approvalManager.getPending(request.approvalId)).toBeDefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });

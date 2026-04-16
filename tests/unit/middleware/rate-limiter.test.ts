@@ -73,6 +73,15 @@ describe('RateLimiter', () => {
     await limiter.checkLimit(TENANT_A, IntegrationId.GMAIL, 10);
     expect(await limiter.getRemainingCalls(TENANT_A, IntegrationId.GMAIL, 10)).toBe(8);
   });
+
+  it('setLimit overrides the per-integration limit', async () => {
+    limiter.setLimit(IntegrationId.HUBSPOT, 2);
+    await limiter.checkLimit(TENANT_A, IntegrationId.HUBSPOT);
+    await limiter.checkLimit(TENANT_A, IntegrationId.HUBSPOT);
+    const check = await limiter.checkLimit(TENANT_A, IntegrationId.HUBSPOT);
+    expect(check.allowed).toBe(false);
+    expect(check.remaining).toBe(0);
+  });
 });
 
 // ─── Cross-tenant isolation ───────────────────────────────────────────────────

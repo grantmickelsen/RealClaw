@@ -21,6 +21,10 @@ export default defineConfig({
         'src/coordinator/router.ts',
         // OAuth flow — requires browser redirect + token exchange
         'src/credentials/oauth-handler.ts',
+        // DB infrastructure — connection pool factory and migration CLI runner
+        // (same rationale as llm/factory.ts and setup/cli.ts)
+        'src/db/postgres.ts',
+        'src/db/migrate.ts',
         // LLM provider factory — wires env vars to concrete classes
         'src/llm/factory.ts',
         // Providers without dedicated test suites yet

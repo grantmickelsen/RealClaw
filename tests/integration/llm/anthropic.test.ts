@@ -122,4 +122,118 @@ describe('AnthropicProvider', () => {
     await expect(provider.complete(baseRequest, 'claude-haiku-4-5-20251001'))
       .rejects.toThrow('Anthropic API error');
   });
+
+  it('throws LlmProviderError on network failure', async () => {
+    server.use(
+      http.post('https://api.anthropic.com/v1/messages', () => HttpResponse.error()),
+    );
+    await expect(provider.complete(baseRequest, 'claude-haiku-4-5-20251001')).rejects.toMatchObject({
+      provider: LlmProviderId.ANTHROPIC,
+      retryable: true,
+    });
+  });
+
+  it('health check returns false on network failure', async () => {
+    server.use(
+      http.get('https://api.anthropic.com/v1/models', () => HttpResponse.error()),
+    );
+    const result = await provider.healthCheck();
+    expect(result).toBe(false);
+  });
+
+  it('health check returns false when API returns non-ok status', async () => {
+    server.use(
+      http.get('https://api.anthropic.com/v1/models', () =>
+        HttpResponse.json({ error: 'Unauthorized' }, { status: 401 }),
+      ),
+    );
+    const result = await provider.healthCheck();
+    expect(result).toBe(false);
+  });
+
+  it('includes stopSequences as stop_sequences in request body', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('https://api.anthropic.com/v1/messages', async ({ request }) => {
+        capturedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(mockAnthropicResponse);
+      }),
+    );
+    await provider.complete({ ...baseRequest, stopSequences: ['<END>', '---'] }, 'claude-haiku-4-5-20251001');
+    expect(capturedBody?.['stop_sequences']).toEqual(['<END>', '---']);
+  });
+
+  it('includes tools in request body with input_schema key', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('https://api.anthropic.com/v1/messages', async ({ request }) => {
+        capturedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(mockAnthropicResponse);
+      }),
+    );
+    await provider.complete({
+      ...baseRequest,
+      tools: [{
+        name: 'search_mls',
+        description: 'Search MLS listings',
+        inputSchema: { type: 'object', properties: { zip: { type: 'string' } } },
+      }],
+    }, 'claude-haiku-4-5-20251001');
+    const tools = capturedBody?.['tools'] as unknown[];
+    expect(Array.isArray(tools)).toBe(true);
+    expect(tools[0]).toMatchObject({ name: 'search_mls', input_schema: { type: 'object' } });
+  });
+
+  it('maps image content blocks to Anthropic base64 source format', async () => {
+    let capturedBody: Record<string, unknown> | null = null;
+    server.use(
+      http.post('https://api.anthropic.com/v1/messages', async ({ request }) => {
+        capturedBody = await request.json() as Record<string, unknown>;
+        return HttpResponse.json(mockAnthropicResponse);
+      }),
+    );
+    await provider.complete({
+      ...baseRequest,
+      messages: [{
+        role: 'user',
+        content: [
+          { type: 'text', text: 'What is in this image?' },
+          { type: 'image', source: { type: 'base64', mediaType: 'image/jpeg', data: 'abc123' } },
+        ],
+      }],
+    }, 'claude-haiku-4-5-20251001');
+    const messages = capturedBody!['messages'] as unknown[];
+    const content = (messages[0] as Record<string, unknown>)['content'] as unknown[];
+    expect(content[1]).toMatchObject({
+      type: 'image',
+      source: { type: 'base64', media_type: 'image/jpeg', data: 'abc123' },
+    });
+  });
+
+  it('listModels returns configured model strings', async () => {
+    const models = await provider.listModels();
+    expect(models).toContain('claude-haiku-4-5-20251001');
+  });
+
+  it('returns estimatedCostUsd of 0 when model string is not in config', async () => {
+    const response = await provider.complete(baseRequest, 'unknown-model-xyz');
+    expect(response.estimatedCostUsd).toBe(0);
+  });
+
+  it('maps tool_use response blocks to toolCalls', async () => {
+    server.use(
+      http.post('https://api.anthropic.com/v1/messages', () =>
+        HttpResponse.json({
+          ...mockAnthropicResponse,
+          content: [
+            { type: 'tool_use', id: 'tu_001', name: 'search_listings', input: { zip: '90210' } },
+          ],
+        }),
+      ),
+    );
+    const response = await provider.complete(baseRequest, 'claude-haiku-4-5-20251001');
+    expect(response.toolCalls).toHaveLength(1);
+    expect(response.toolCalls![0]).toMatchObject({ id: 'tu_001', name: 'search_listings', input: { zip: '90210' } });
+    expect(response.text).toBe('');
+  });
 });

@@ -96,6 +96,30 @@ const baseRequest: LlmRequest = {
 };
 
 describe('LlmRouter', () => {
+  describe('cancellation', () => {
+    it('throws TaskCancelledError when correlationId is already cancelled', async () => {
+      const mockStore = {
+        cancel: vi.fn(),
+        isCancelled: vi.fn().mockResolvedValue(true),
+      };
+      const cancelRouter = new LlmRouter(baseConfig, new Map([[LlmProviderId.ANTHROPIC, anthropic]]), mockStore as never);
+      await expect(
+        cancelRouter.complete({ ...baseRequest, correlationId: 'corr-xyz-123' }),
+      ).rejects.toMatchObject({ name: 'TaskCancelledError' });
+    });
+
+    it('proceeds normally when correlationId is not cancelled', async () => {
+      const mockStore = {
+        cancel: vi.fn(),
+        isCancelled: vi.fn().mockResolvedValue(false),
+      };
+      const cancelRouter = new LlmRouter(baseConfig, new Map([[LlmProviderId.ANTHROPIC, anthropic]]), mockStore as never);
+      const response = await cancelRouter.complete({ ...baseRequest, correlationId: 'corr-not-cancelled' });
+      expect(response.provider).toBe(LlmProviderId.ANTHROPIC);
+    });
+  });
+
+
   describe('tier resolution', () => {
     it('resolves FAST tier to configured provider+model', async () => {
       const response = await router.complete({ ...baseRequest, model: ModelTier.FAST });
@@ -187,6 +211,18 @@ describe('LlmRouter', () => {
       expect(health[LlmProviderId.ANTHROPIC]).toBe(true);
       expect(health[LlmProviderId.OPENAI]).toBe(true);
     });
+
+    it('marks provider false in healthCheckAll when healthCheck throws', async () => {
+      class ThrowingProvider extends LlmProvider {
+        async complete(): Promise<LlmResponse> { return {} as LlmResponse; }
+        async healthCheck(): Promise<boolean> { throw new Error('health check failed'); }
+        async listModels(): Promise<string[]> { return []; }
+      }
+      const throwingProvider = new ThrowingProvider(makeProviderConfig(LlmProviderId.ANTHROPIC, []));
+      const r = new LlmRouter(baseConfig, new Map([[LlmProviderId.ANTHROPIC, throwingProvider]]));
+      const health = await r.healthCheckAll();
+      expect(health[LlmProviderId.ANTHROPIC]).toBe(false);
+    });
   });
 
   describe('missing provider', () => {
@@ -194,6 +230,35 @@ describe('LlmRouter', () => {
       const emptyProviders = new Map<LlmProviderId, LlmProvider>();
       const bareRouter = new LlmRouter(baseConfig, emptyProviders);
       await expect(bareRouter.complete(baseRequest)).rejects.toThrow('not configured');
+    });
+  });
+
+  describe('error paths', () => {
+    it('throws LlmProviderError when no tier mapping exists for the requested tier', async () => {
+      const noMappingConfig = {
+        ...baseConfig,
+        tierMapping: {}, // No mappings at all
+      };
+      const r = new LlmRouter(noMappingConfig as never, new Map([[LlmProviderId.ANTHROPIC, anthropic]]));
+      await expect(r.complete(baseRequest)).rejects.toMatchObject({
+        provider: 'router',
+        retryable: false,
+      });
+    });
+
+    it('re-throws non-retryable LlmProviderError without falling back', async () => {
+      const nonRetryableProvider = new MockProvider(
+        makeProviderConfig(LlmProviderId.ANTHROPIC, ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-6']),
+      );
+      // Override complete to throw a non-retryable error
+      vi.spyOn(nonRetryableProvider, 'complete').mockRejectedValue(
+        new LlmProviderError(LlmProviderId.ANTHROPIC, 400, false, 'Bad request'),
+      );
+      const r = new LlmRouter(baseConfig, new Map([
+        [LlmProviderId.ANTHROPIC, nonRetryableProvider],
+        [LlmProviderId.OPENAI, openai],
+      ]));
+      await expect(r.complete(baseRequest)).rejects.toMatchObject({ statusCode: 400, retryable: false });
     });
   });
 });

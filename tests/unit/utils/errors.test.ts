@@ -6,6 +6,7 @@ import {
   AgentTimeoutError,
   ApprovalExpiredError,
   CredentialError,
+  TaskCancelledError,
   isRetryable,
   toClawError,
 } from '../../../src/utils/errors.js';
@@ -118,5 +119,15 @@ describe('toClawError', () => {
   it('uses provided code', () => {
     const err = toClawError(new Error('x'), 'CUSTOM_CODE');
     expect(err.code).toBe('CUSTOM_CODE');
+  });
+});
+
+describe('TaskCancelledError', () => {
+  it('includes correlationId in message', () => {
+    const err = new TaskCancelledError('corr-abc-123');
+    expect(err.message).toContain('corr-abc-123');
+    expect(err.name).toBe('TaskCancelledError');
+    expect(err.correlationId).toBe('corr-abc-123');
+    expect(err).toBeInstanceOf(Error);
   });
 });

@@ -68,6 +68,16 @@ describe('MemorySearch', () => {
     expect(result.matches).toHaveLength(0);
   });
 
+  it('searches files in subdirectories', async () => {
+    await fs.mkdir(path.join(tmpDir, 'contacts', 'vip'), { recursive: true });
+    await fs.writeFile(
+      path.join(tmpDir, 'contacts', 'vip', 'alice-vip.md'),
+      '# Contact: Alice VIP\nAlice is a luxury condo buyer with a $2M budget.',
+    );
+    const result = await search.search({ domain: 'contacts', query: 'luxury condo', maxResults: 5 });
+    expect(result.matches.some(m => m.path.includes('alice-vip'))).toBe(true);
+  });
+
   it('cross-domain search stays within domain', async () => {
     const result = await search.search({ domain: 'knowledge', query: 'Ventura', maxResults: 5 });
     expect(result.matches.length).toBeGreaterThan(0);

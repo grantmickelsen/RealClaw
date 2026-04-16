@@ -85,6 +85,18 @@ describe('verifyJwt', () => {
       process.env.NODE_ENV = original;
     }
   });
+
+  it('throws AuthError with dev-mode message when JWT_SECRET is absent outside production', () => {
+    delete process.env.JWT_SECRET;
+    const original = process.env.NODE_ENV;
+    process.env.NODE_ENV = 'development';
+    try {
+      expect(() => verifyJwt('Bearer anything')).toThrow('X-Tenant-Id');
+    } finally {
+      process.env.NODE_ENV = original;
+      process.env.JWT_SECRET = TEST_SECRET;
+    }
+  });
 });
 
 // ─── extractTenant ────────────────────────────────────────────────────────────
@@ -173,5 +185,19 @@ describe('signJwt', () => {
     // Should expire roughly 90 days from now (within a minute of tolerance)
     expect(payload.exp!).toBeGreaterThan(now + 90 * 24 * 3600 - 60);
     expect(payload.exp!).toBeLessThan(now + 90 * 24 * 3600 + 60);
+  });
+
+  describe('production guard', () => {
+    it('throws AuthError when JWT_SECRET is missing in production mode', () => {
+      delete process.env.JWT_SECRET;
+      process.env.NODE_ENV = 'production';
+
+      try {
+        expect(() => verifyJwt('some-token', undefined)).toThrow('JWT_SECRET must be set in production');
+      } finally {
+        process.env.NODE_ENV = 'test';
+        process.env.JWT_SECRET = TEST_SECRET;
+      }
+    });
   });
 });

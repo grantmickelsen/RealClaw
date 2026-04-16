@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { CredentialVault } from '../../../src/credentials/vault.js';
 import { IntegrationId } from '../../../src/types/integrations.js';
 import fs from 'fs/promises';
@@ -82,5 +82,36 @@ describe('CredentialVault', () => {
     // With 0 days, should be expired immediately
     const expired = await vault.isExpired(IntegrationId.CANVA, 'api_key');
     expect(typeof expired).toBe('boolean'); // Just verify it returns a boolean
+  });
+
+  it('rotate() re-stores all credentials for an integration and updates index timestamps', async () => {
+    await vault.store(IntegrationId.GMAIL, 'access_token', 'tok_old');
+    await vault.store(IntegrationId.GMAIL, 'refresh_token', 'ref_old');
+
+    await vault.rotate(IntegrationId.GMAIL);
+
+    // Values are preserved after rotation
+    expect(await vault.retrieve(IntegrationId.GMAIL, 'access_token')).toBe('tok_old');
+    expect(await vault.retrieve(IntegrationId.GMAIL, 'refresh_token')).toBe('ref_old');
+
+    // Metadata is updated
+    const meta = await vault.getMetadata(IntegrationId.GMAIL, 'access_token');
+    expect(meta).not.toBeNull();
+    expect(meta!.storedAt).toBeTruthy();
+  });
+
+  it('rotate() is a no-op when no credentials exist for the integration', async () => {
+    // Should not throw even if nothing is stored
+    await expect(vault.rotate(IntegrationId.HUBSPOT)).resolves.toBeUndefined();
+  });
+
+  it('throws non-ENOENT errors from retrieve', async () => {
+    const permError = Object.assign(new Error('Permission denied'), { code: 'EACCES' });
+    vi.spyOn(fs, 'readFile').mockRejectedValue(permError);
+    try {
+      await expect(vault.retrieve(IntegrationId.GMAIL, 'access_token')).rejects.toThrow('Permission denied');
+    } finally {
+      vi.restoreAllMocks();
+    }
   });
 });
