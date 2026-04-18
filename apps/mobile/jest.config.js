@@ -2,8 +2,7 @@
 module.exports = {
   preset: 'jest-expo',
 
-  // jest-setup.ts registers all native-module mocks globally
-  setupFiles: ['<rootDir>/jest-setup.ts'],
+  setupFilesAfterEnv: ['<rootDir>/jest-setup.ts'],
 
   // Allow Jest to transform Expo and React Native packages (they ship as ESM)
   transformIgnorePatterns: [
