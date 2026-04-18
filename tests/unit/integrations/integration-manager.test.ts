@@ -3,13 +3,13 @@ import { IntegrationManager } from '../../../src/integrations/integration-manage
 import { IntegrationId } from '../../../src/types/integrations.js';
 import type { IntegrationConfig, IntegrationStatus } from '../../../src/types/integrations.js';
 import type { CredentialVault } from '../../../src/credentials/vault.js';
-import type { RateLimiter } from '../../../src/middleware/rate-limiter.js';
+import type { IRateLimiter } from '../../../src/middleware/rate-limiter.js';
 import type { AuditLogger } from '../../../src/middleware/audit-logger.js';
 
 // ─── Minimal stubs ───
 
 const mockVault = {} as unknown as CredentialVault;
-const mockRateLimiter = {} as unknown as RateLimiter;
+const mockRateLimiter = {} as unknown as IRateLimiter;
 const mockAuditLogger = { log: vi.fn() } as unknown as AuditLogger;
 
 function makeConfig(id: IntegrationId, enabled: boolean): IntegrationConfig {

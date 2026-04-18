@@ -1,7 +1,6 @@
-import { useState } from 'react';
-import { View, Text, StyleSheet, TouchableOpacity, Alert, ActivityIndicator } from 'react-native';
-import * as LocalAuthentication from 'expo-local-authentication';
-import { authedFetch } from '../../lib/api';
+import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { router } from 'expo-router';
+import type { ApprovalActionType } from '../../store/approvals';
 
 interface Props {
   approvalId: string;
@@ -9,97 +8,97 @@ interface Props {
   onResolved: () => void;
 }
 
+const CATEGORY_LABELS: Record<ApprovalActionType | string, string> = {
+  send_email: 'Email',
+  send_sms: 'SMS',
+  send_linkedin_dm: 'LinkedIn DM',
+  modify_calendar: 'Calendar',
+  post_social: 'Social Post',
+  send_document: 'Document',
+  financial_action: 'Financial',
+};
+
+const CATEGORY_ICONS: Record<ApprovalActionType | string, string> = {
+  send_email: '📧',
+  send_sms: '💬',
+  send_linkedin_dm: '💼',
+  modify_calendar: '📅',
+  post_social: '📱',
+  send_document: '📄',
+  financial_action: '💰',
+};
+
+function extractCategories(description: string): string[] {
+  const found: string[] = [];
+  for (const key of Object.keys(CATEGORY_LABELS)) {
+    if (description.toLowerCase().includes(key.replace('_', ' ')) || description.toLowerCase().includes(CATEGORY_LABELS[key].toLowerCase())) {
+      found.push(key);
+    }
+  }
+  return found.length > 0 ? found : ['send_email'];
+}
+
 export function ApprovalCard({ approvalId, description, onResolved }: Props) {
-  const [loading, setLoading] = useState(false);
+  void onResolved; // called by the carousel screen on completion
 
-  async function handleDecision(decision: 'approved' | 'rejected') {
-    if (decision === 'approved') {
-      // Biometric gate (Phase 4, Decision 13: client-side soft check)
-      const bioAvailable = await LocalAuthentication.hasHardwareAsync();
-      if (bioAvailable) {
-        const result = await LocalAuthentication.authenticateAsync({
-          promptMessage: 'Confirm approval',
-          cancelLabel: 'Cancel',
-        });
-        if (!result.success) return;  // user cancelled or failed
-      }
-    }
+  const categories = extractCategories(description);
 
-    setLoading(true);
-    try {
-      const res = await authedFetch(`/v1/approvals/${approvalId}`, {
-        method: 'POST',
-        body: JSON.stringify({
-          approvalId,
-          decision,
-          biometricConfirmed: decision === 'approved',
-          decidedAt: new Date().toISOString(),
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json() as { error: string };
-        Alert.alert('Error', err.error ?? 'Failed to submit decision');
-        return;
-      }
-
-      onResolved();
-    } catch (err) {
-      Alert.alert('Error', (err as Error).message);
-    } finally {
-      setLoading(false);
-    }
+  function handlePress() {
+    router.push(`/approval/${approvalId}`);
   }
 
   return (
-    <View style={styles.card}>
-      <Text style={styles.title}>Approval Required</Text>
-      <Text style={styles.description}>{description}</Text>
+    <Pressable style={styles.card} onPress={handlePress} accessibilityRole="button">
+      <View style={styles.header}>
+        <Text style={styles.bolt}>⚡</Text>
+        <Text style={styles.title}>
+          {categories.length === 1 ? '1 action needs' : `${categories.length} actions need`} your approval
+        </Text>
+      </View>
 
-      {loading ? (
-        <ActivityIndicator color="#0066FF" style={styles.loader} />
-      ) : (
-        <View style={styles.actions}>
-          <TouchableOpacity
-            style={[styles.button, styles.rejectButton]}
-            onPress={() => handleDecision('rejected')}
-          >
-            <Text style={styles.rejectText}>Reject</Text>
-          </TouchableOpacity>
+      <View style={styles.chips}>
+        {categories.map(cat => (
+          <View key={cat} style={styles.chip}>
+            <Text style={styles.chipText}>
+              {CATEGORY_ICONS[cat]} {CATEGORY_LABELS[cat]}
+            </Text>
+          </View>
+        ))}
+      </View>
 
-          <TouchableOpacity
-            style={[styles.button, styles.approveButton]}
-            onPress={() => handleDecision('approved')}
-          >
-            <Text style={styles.approveText}>Approve</Text>
-          </TouchableOpacity>
-        </View>
-      )}
-    </View>
+      <View style={styles.footer}>
+        <Text style={styles.cta}>Review now →</Text>
+      </View>
+    </Pressable>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    margin: 12,
-    padding: 16,
+    marginHorizontal: 12,
+    marginVertical: 6,
     backgroundColor: '#fff8e6',
-    borderRadius: 12,
+    borderRadius: 16,
     borderWidth: 1,
     borderColor: '#ffcc00',
+    padding: 14,
+    gap: 10,
   },
-  title: { fontSize: 14, fontWeight: '700', color: '#996600', marginBottom: 8 },
-  description: { fontSize: 15, color: '#333', marginBottom: 16, lineHeight: 22 },
-  loader: { marginVertical: 12 },
-  actions: { flexDirection: 'row', gap: 12 },
-  button: {
-    flex: 1,
-    paddingVertical: 12,
-    borderRadius: 10,
+  header: {
+    flexDirection: 'row',
     alignItems: 'center',
+    gap: 6,
   },
-  approveButton: { backgroundColor: '#0066FF' },
-  rejectButton: { backgroundColor: '#fff', borderWidth: 1, borderColor: '#ddd' },
-  approveText: { color: '#fff', fontWeight: '600', fontSize: 16 },
-  rejectText: { color: '#333', fontWeight: '600', fontSize: 16 },
+  bolt: { fontSize: 16 },
+  title: { fontSize: 14, fontWeight: '600', color: '#7a4f00', flex: 1 },
+  chips: { flexDirection: 'row', flexWrap: 'wrap', gap: 6 },
+  chip: {
+    backgroundColor: 'rgba(255,204,0,0.25)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  chipText: { fontSize: 12, color: '#7a4f00', fontWeight: '500' },
+  footer: { alignItems: 'flex-end' },
+  cta: { fontSize: 14, fontWeight: '700', color: '#0066FF' },
 });

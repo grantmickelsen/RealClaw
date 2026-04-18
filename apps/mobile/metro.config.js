@@ -1,4 +1,5 @@
 const { getDefaultConfig } = require('expo/metro-config');
+const { withNativeWind } = require('nativewind/metro');
 const path = require('path');
 
 const projectRoot = __dirname;
@@ -18,4 +19,41 @@ config.resolver.nodeModulesPaths = [
 // Ensure .ts/.tsx files in packages/types are included
 config.resolver.sourceExts = [...config.resolver.sourceExts, 'ts', 'tsx'];
 
-module.exports = config;
+// Treat .wasm as a binary asset so Metro doesn't try to parse it as JS
+// (expo-sqlite's web worker imports wa-sqlite.wasm directly)
+config.resolver.assetExts = [...config.resolver.assetExts, 'wasm'];
+
+// On web, redirect native-only packages to localStorage/stub shims.
+// These packages use native APIs (keychain, Apple/Google SDKs) unavailable in browsers.
+const WEB_SHIMS = {
+  'uuid':                                      'shims/uuid.js',
+  'expo-secure-store':                         'shims/expo-secure-store.js',
+  'expo-apple-authentication':                 'shims/expo-apple-authentication.js',
+  '@react-native-google-signin/google-signin': 'shims/google-signin.js',
+};
+
+// Packages requiring compiled native modules not present in Expo Go.
+// Shimmed on all non-web platforms so the app loads; full functionality
+// requires a development build (npx expo run:ios / run:android).
+const EXPO_GO_SHIMS = {
+  '@react-native-google-signin/google-signin': 'shims/google-signin.js',
+  '@react-native-voice/voice':                 'shims/react-native-voice.js',
+};
+
+config.resolver.resolveRequest = (context, moduleName, platform) => {
+  if (platform === 'web' && WEB_SHIMS[moduleName]) {
+    return {
+      filePath: path.resolve(projectRoot, WEB_SHIMS[moduleName]),
+      type: 'sourceFile',
+    };
+  }
+  if (platform !== 'web' && EXPO_GO_SHIMS[moduleName]) {
+    return {
+      filePath: path.resolve(projectRoot, EXPO_GO_SHIMS[moduleName]),
+      type: 'sourceFile',
+    };
+  }
+  return context.resolveRequest(context, moduleName, platform);
+};
+
+module.exports = withNativeWind(config, { input: './global.css' });

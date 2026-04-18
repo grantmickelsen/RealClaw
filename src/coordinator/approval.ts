@@ -48,6 +48,10 @@ export class ApprovalManager {
     this.onApprovalExecute = callback;
   }
 
+  getApproval(approvalId: string): ApprovalRequest | undefined {
+    return this.pending.get(approvalId);
+  }
+
   async createApprovalRequest(items: ApprovalItem[]): Promise<ApprovalRequest> {
     const approvalId = uuidv4();
     const now = new Date();

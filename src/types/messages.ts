@@ -182,7 +182,7 @@ export interface ApprovalResponse extends BaseMessage {
 
 export interface ApprovalDecision {
   index: number;
-  decision: 'approve' | 'edit' | 'cancel';
+  decision: 'approve' | 'edit' | 'cancel' | 'shared';
   editInstructions?: string;
 }
 

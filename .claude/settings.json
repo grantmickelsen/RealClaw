@@ -66,7 +66,15 @@
       "Bash(sed -n '43,55p' src/gateway/push-notification.ts)",
       "Bash(sed -n '98,107p' src/utils/normalize.ts)",
       "Bash(sed -n '218,225p' src/utils/normalize.ts)",
-      "Bash(sed -n '274,285p' src/utils/normalize.ts)"
+      "Bash(sed -n '274,285p' src/utils/normalize.ts)",
+      "Bash(node -e 'console.log\\(require\\('\\\\''/home/grant/RealClaw/node_modules/nativewind/package.json'\\\\''\\).version\\)')",
+      "Bash(xargs -I{} node -e \"const p=require\\('{}'\\); console.log\\('{}: ' + p.version\\)\")",
+      "Bash(node -e 'console.log\\(require\\('\\\\''/home/grant/RealClaw/apps/mobile/package.json'\\\\''\\).dependencies\\)')",
+      "Bash(node -e 'const p = require\\('\\\\''/home/grant/RealClaw/apps/mobile/node_modules/react-native/package.json'\\\\''\\); console.log\\('\\\\''peerDeps:'\\\\'', JSON.stringify\\(p.peerDependencies\\)\\); console.log\\('\\\\''version:'\\\\'', p.version\\)')",
+      "Bash(node -e 'const p = require\\('\\\\''/home/grant/RealClaw/node_modules/react-native/package.json'\\\\''\\); console.log\\('\\\\''version:'\\\\'', p.version\\); console.log\\('\\\\''peerDeps:'\\\\'', JSON.stringify\\(p.peerDependencies\\)\\)')",
+      "Bash(node -e ' *)",
+      "Bash(node -e 'console.log\\(require\\('\\\\''/home/grant/RealClaw/node_modules/react/package.json'\\\\''\\).version\\)')",
+      "Bash(node -e 'console.log\\('\\\\''react:'\\\\'', require\\('\\\\''/home/grant/RealClaw/node_modules/react/package.json'\\\\''\\).version\\)')"
     ],
     "additionalDirectories": [
       "/home/grant/.claude/plans",

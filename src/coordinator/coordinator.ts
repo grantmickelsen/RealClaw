@@ -45,7 +45,7 @@ export class Coordinator {
   private readonly clawRouter: CoordinatorRouter;
   private readonly dispatcher: Dispatcher;
   private readonly synthesizer: Synthesizer;
-  private readonly approvalManager: ApprovalManager;
+  public readonly approvalManager: ApprovalManager;
 
   // Outbound message callback (set by gateway)
   private sendMessage?: (platform: string, channelId: string, payload: unknown, correlationId?: string) => Promise<void>;
@@ -67,9 +67,14 @@ export class Coordinator {
     this.approvalManager = new ApprovalManager(tenantId, tenantMemoryPath, undefined, queryFn);
 
     this.approvalManager.onExecute(async (request, response) => {
-      const approvedDecisions = response.decisions.filter(d => d.decision === 'approve');
+      for (const decision of response.decisions) {
+        if (decision.decision === 'shared') {
+          const item = request.batch[decision.index];
+          log.info(`[Approval] Item ${decision.index} (${item?.actionType ?? 'unknown'}) manually shared by user — no API dispatch`);
+          continue;
+        }
+        if (decision.decision !== 'approve') continue;
 
-      for (const decision of approvedDecisions) {
         const item = request.batch[decision.index];
         if (!item) continue;
 

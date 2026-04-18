@@ -1,3 +1,4 @@
+import '../global.css';
 import { useEffect, useCallback } from 'react';
 import { SplashScreen, Stack, Redirect } from 'expo-router';
 import { useAuthStore } from '../store/auth';

@@ -98,8 +98,7 @@ interface WsEvent {
 }
 
 function handleMessage(event: WsEvent): void {
-  const { updateMessage, removePending } = useWsStore.getState() as { updateMessage?: unknown; removePending: (id: string) => void };
-  void updateMessage;
+  void useWsStore;
 
   switch (event.type) {
     case 'CONNECTED':
@@ -120,16 +119,18 @@ function handleMessage(event: WsEvent): void {
     case 'TASK_COMPLETE': {
       // Flush any buffered stream tokens immediately
       const buffered = streamBuffers.get(event.correlationId);
+      const hasApproval = !!(event.payload.hasApproval);
+      const approvalId = (event.payload.approvalId as string | undefined) ?? undefined;
       if (buffered) {
-        useChatStore.getState().updateMessage(event.correlationId, { text: buffered, status: 'done' });
+        useChatStore.getState().updateMessage(event.correlationId, { text: buffered, status: 'done', hasApproval, approvalId });
         streamBuffers.delete(event.correlationId);
       } else {
         const text = ((event.payload.text as string) ?? '').trim();
-        const hasApproval = !!(event.payload.hasApproval);
         useChatStore.getState().updateMessage(event.correlationId, {
-          text: text || useChatStore.getState().messages.find(m => m.correlationId === event.correlationId)?.text ?? '',
+          text: text || (useChatStore.getState().messages.find(m => m.correlationId === event.correlationId)?.text ?? ''),
           status: 'done',
           hasApproval,
+          approvalId,
         });
       }
       useWsStore.getState().removePending(event.correlationId);

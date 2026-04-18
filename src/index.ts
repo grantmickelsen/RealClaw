@@ -179,6 +179,7 @@ class TenantRegistry {
             agentId: 'coordinator',
             processingMs: 0,
             hasApproval: !!(payload as { approvalRequest?: unknown }).approvalRequest,
+            approvalId: ((payload as { approvalRequest?: { approvalId?: string } }).approvalRequest?.approvalId) ?? null,
           },
         });
       }
@@ -644,6 +645,31 @@ async function bootstrap(): Promise<void> {
             wsSessionManager.untrackRequest(ws, correlationId);
           }
         }
+      });
+      return;
+    }
+
+    // ─── GET /v1/approvals/:approvalId (JWT required) ───
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/approvals/')) {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+      const approvalId = decodeURIComponent(url.pathname.slice('/v1/approvals/'.length));
+      const coordinator = await tenantRegistry.getOrCreate(auth.tenantId);
+      const request = coordinator.approvalManager.getApproval(approvalId);
+      if (!request) {
+        sendJson(res, 404, { ok: false, error: 'Approval not found or already resolved' });
+        return;
+      }
+      sendJson(res, 200, {
+        approvalId: request.approvalId,
+        items: request.batch,
+        expiresAt: request.expiresAt,
+        status: 'pending',
       });
       return;
     }
