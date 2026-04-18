@@ -38,6 +38,7 @@ const WEB_SHIMS = {
 const EXPO_GO_SHIMS = {
   '@react-native-google-signin/google-signin': 'shims/google-signin.js',
   '@react-native-voice/voice':                 'shims/react-native-voice.js',
+  'uuid':                                      'shims/uuid.js',
 };
 
 config.resolver.resolveRequest = (context, moduleName, platform) => {

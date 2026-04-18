@@ -92,8 +92,7 @@
       "@react-native-voice/voice"
     ],
     "experiments": {
-      "typedRoutes": true,
-      "reactCompiler": true
+      "typedRoutes": true
     }
   }
 }

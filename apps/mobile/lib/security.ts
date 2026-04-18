@@ -1,5 +1,5 @@
 import * as Device from 'expo-device';
-import * as FileSystem from 'expo-file-system';
+import * as FileSystem from 'expo-file-system/legacy';
 import { clearStoredTokens } from './auth';
 import { useAuthStore } from '../store/auth';
 

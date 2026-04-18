@@ -68,15 +68,18 @@ export function SwipeCard({ item, isTop, stackDepth, onApprove, onReject, onEdit
   const hintFired = useRef(false);
 
   async function attemptApprove() {
-    const bioAvailable = await LocalAuthentication.hasHardwareAsync();
-    if (bioAvailable) {
-      const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Confirm approval' });
-      if (!result.success) {
-        // Snap back
-        translateX.value = withSpring(0);
-        translateY.value = withSpring(0);
-        return;
+    try {
+      const bioAvailable = await LocalAuthentication.hasHardwareAsync();
+      if (bioAvailable) {
+        const result = await LocalAuthentication.authenticateAsync({ promptMessage: 'Confirm approval' });
+        if (!result.success) {
+          translateX.value = withSpring(0);
+          translateY.value = withSpring(0);
+          return;
+        }
       }
+    } catch {
+      // Biometric auth unavailable or failed — proceed without it
     }
     hapticSuccess();
     onApprove();

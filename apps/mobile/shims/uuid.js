@@ -1,5 +1,11 @@
-// Shim for the `uuid` package on web/SSR.
-// crypto.randomUUID() is available in modern browsers (Chrome 92+, Firefox 95+, Safari 15.4+)
-// and in Node 14.17+. React Native 0.71+ also provides it via globalThis.crypto.
-export const v4 = () => globalThis.crypto.randomUUID();
-export const v1 = v4; // not a real v1 — satisfies any accidental imports
+export const v4 = () => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  // Fallback for older Hermes builds without crypto.randomUUID
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0;
+    return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
+  });
+};
+export const v1 = v4;

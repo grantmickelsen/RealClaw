@@ -74,7 +74,14 @@
       "Bash(node -e 'const p = require\\('\\\\''/home/grant/RealClaw/node_modules/react-native/package.json'\\\\''\\); console.log\\('\\\\''version:'\\\\'', p.version\\); console.log\\('\\\\''peerDeps:'\\\\'', JSON.stringify\\(p.peerDependencies\\)\\)')",
       "Bash(node -e ' *)",
       "Bash(node -e 'console.log\\(require\\('\\\\''/home/grant/RealClaw/node_modules/react/package.json'\\\\''\\).version\\)')",
-      "Bash(node -e 'console.log\\('\\\\''react:'\\\\'', require\\('\\\\''/home/grant/RealClaw/node_modules/react/package.json'\\\\''\\).version\\)')"
+      "Bash(node -e 'console.log\\('\\\\''react:'\\\\'', require\\('\\\\''/home/grant/RealClaw/node_modules/react/package.json'\\\\''\\).version\\)')",
+      "Bash(cd /home/grant/RealClaw/apps/mobile)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(xargs ls *)",
+      "Bash(ip addr *)",
+      "Bash(awk '{print $2}')",
+      "Bash(grep -v \"^\\\\s*$\")",
+      "Bash(pkill -f ngrok)"
     ],
     "additionalDirectories": [
       "/home/grant/.claude/plans",

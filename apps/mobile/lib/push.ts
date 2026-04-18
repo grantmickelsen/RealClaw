@@ -4,16 +4,6 @@ import { Platform } from 'react-native';
 import { authedFetch } from './api';
 import { useAuthStore } from '../store/auth';
 
-Notifications.setNotificationHandler({
-  handleNotification: async () => ({
-    shouldShowAlert: true,
-    shouldPlaySound: true,
-    shouldSetBadge: true,
-    shouldShowBanner: true,
-    shouldShowList: true,
-  }),
-});
-
 export async function registerPushToken(): Promise<string | null> {
   if (!Device.isDevice) return null;  // simulators don't get push tokens
 
@@ -59,6 +49,15 @@ export async function registerPushToken(): Promise<string | null> {
 }
 
 export async function setupNotificationHandlers(): Promise<void> {
+  Notifications.setNotificationHandler({
+    handleNotification: async () => ({
+      shouldShowAlert: true,
+      shouldPlaySound: true,
+      shouldSetBadge: true,
+      shouldShowBanner: true,
+      shouldShowList: true,
+    }),
+  });
   // Register categories for actionable notifications
   await Notifications.setNotificationCategoryAsync('APPROVAL', [
     { identifier: 'APPROVE', buttonTitle: 'Approve', options: { isDestructive: false } },
