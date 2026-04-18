@@ -29,6 +29,8 @@ module.exports = {
     '^@realclaw/types$': '<rootDir>/../../packages/types/src/index.ts',
     // Support the @/ path alias from tsconfig.json
     '^@/(.*)$': '<rootDir>/$1',
+    // Native-only packages — use the same web shims Metro uses
+    '^@react-native-google-signin/google-signin$': '<rootDir>/shims/google-signin.js',
   },
 
   testMatch: [
