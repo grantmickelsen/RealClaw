@@ -45,6 +45,12 @@ const BOOTSTRAP_MAP: BootstrapMapping[] = [
       { envVar: 'CLAW_HUBSPOT_ACCESS_TOKEN', vaultKey: 'access_token' },
     ],
   },
+  {
+    id: IntegrationId.RENTCAST,
+    entries: [
+      { envVar: 'CLAW_RENTCAST_API_KEY', vaultKey: 'api_key' },
+    ],
+  },
 ];
 
 /**

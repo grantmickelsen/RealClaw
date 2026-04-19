@@ -18,6 +18,7 @@ export interface ChatMessage {
 interface ChatState {
   messages: ChatMessage[];
   addMessage(msg: ChatMessage): void;
+  prependMessages(msgs: ChatMessage[]): void;
   updateMessage(correlationId: string, updates: Partial<ChatMessage>): void;
   appendStreamChunk(correlationId: string, chunk: string): void;
   clearMessages(): void;
@@ -30,10 +31,21 @@ export const useChatStore = create<ChatState>((set) => ({
     set(state => ({ messages: [...state.messages, msg] }));
   },
 
+  // Batch-load historical messages in one store update (avoids N re-renders)
+  prependMessages(msgs) {
+    set(state => {
+      const existingIds = new Set(state.messages.map(m => m.id));
+      const newOnes = msgs.filter(m => !existingIds.has(m.id));
+      return newOnes.length > 0
+        ? { messages: [...newOnes, ...state.messages] }
+        : state;
+    });
+  },
+
   updateMessage(correlationId, updates) {
     set(state => ({
       messages: state.messages.map(m =>
-        m.correlationId === correlationId ? { ...m, ...updates } : m,
+        m.correlationId === correlationId && m.role === 'assistant' ? { ...m, ...updates } : m,
       ),
     }));
   },
@@ -41,7 +53,7 @@ export const useChatStore = create<ChatState>((set) => ({
   appendStreamChunk(correlationId, chunk) {
     set(state => ({
       messages: state.messages.map(m =>
-        m.correlationId === correlationId
+        m.correlationId === correlationId && m.role === 'assistant'
           ? { ...m, text: m.text + chunk, status: 'streaming' as MessageStatus }
           : m,
       ),

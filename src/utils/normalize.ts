@@ -7,7 +7,9 @@ type Platform = InboundMessage['platform'];
 
 export function normalizeInbound(platform: string, rawMessage: RawMessage): InboundMessage {
   const messageId = uuidv4();
-  const correlationId = uuidv4();
+  const correlationId = (typeof rawMessage['correlationId'] === 'string' && rawMessage['correlationId'])
+    ? rawMessage['correlationId']
+    : uuidv4();
   const timestamp = new Date().toISOString();
   const typedPlatform = platform as Platform;
 

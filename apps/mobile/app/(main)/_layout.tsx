@@ -1,7 +1,20 @@
-import { Tabs } from 'expo-router';
+import { Tabs, Redirect } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
+import { useAuthStore } from '../../store/auth';
 
 export default function MainLayout() {
+  const status = useAuthStore(s => s.status);
+
+  // Not authenticated — send back to sign-in
+  if (status === 'unauthenticated') {
+    return <Redirect href="/(auth)/sign-in" />;
+  }
+
+  // Still resolving stored tokens — render nothing rather than flash the tabs
+  if (status === 'loading') {
+    return null;
+  }
+
   return (
     <Tabs
       screenOptions={{

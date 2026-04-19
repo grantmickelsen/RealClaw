@@ -13,42 +13,62 @@ import { v4 as uuidv4 } from 'uuid';
 import { useChatStore } from '../../../store/chat';
 import { useWsStore } from '../../../store/ws';
 import { MessageList } from '../../../components/chat/MessageList';
+import { SkillPicker } from '../../../components/chat/SkillPicker';
 import { VoiceInput } from '../../../components/VoiceInput';
 import { authedFetch } from '../../../lib/api';
 import { saveMessage, loadRecentMessages, enqueueMessage } from '../../../lib/db';
 import { useNetworkStatus } from '../../../hooks/useNetworkStatus';
 import { drainOfflineQueue } from '../../../lib/offline-queue';
+import type { Skill } from '../../../constants/skills';
 
 export default function ChatScreen() {
   const [input, setInput] = useState('');
   const [sending, setSending] = useState(false);
+  const [inputBarHeight, setInputBarHeight] = useState(64);
   const inputRef = useRef<TextInput>(null);
 
-  const { messages, addMessage, updateMessage } = useChatStore();
-  const { addPending, pendingCorrelationIds } = useWsStore();
-  const { isConnected } = useNetworkStatus();
-  const wsStatus = useWsStore(s => s.status);
+  // ─── Skill picker state ───────────────────────────────────────────────
+  const slashMatch = input.match(/^\/(\S*)$/);
+  const pickerVisible = slashMatch !== null;
+  const pickerQuery = slashMatch ? slashMatch[1]! : '';
 
-  // Load persisted messages on mount
-  useEffect(() => {
-    loadRecentMessages(50).then(stored => {
-      const sorted = [...stored].reverse();
-      for (const row of sorted) {
-        if (!messages.find(m => m.id === row.id)) {
-          addMessage({
-            id: row.id,
-            correlationId: row.correlation_id,
-            role: row.role,
-            text: row.text,
-            status: 'done',
-            timestamp: row.timestamp,
-            hasApproval: row.has_approval === 1,
-            approvalId: row.approval_id ?? undefined,
-          });
-        }
+  const handleSkillSelect = useCallback((skill: Skill) => {
+    setInput(skill.template);
+    // Focus and place cursor at first bracket for easy editing
+    requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      const idx = skill.template.indexOf('[');
+      if (idx >= 0) {
+        inputRef.current?.setNativeProps?.({ selection: { start: idx, end: skill.template.indexOf(']') + 1 } });
       }
     });
   }, []);
+
+  const messages = useChatStore(s => s.messages);
+  const addMessage = useChatStore(s => s.addMessage);
+  const prependMessages = useChatStore(s => s.prependMessages);
+  const updateMessage = useChatStore(s => s.updateMessage);
+  const addPending = useWsStore(s => s.addPending);
+  const pendingSize = useWsStore(s => s.pendingCorrelationIds.size);
+  const wsStatus = useWsStore(s => s.status);
+  const { isConnected } = useNetworkStatus();
+
+  // Load persisted messages on mount — one store update, not N
+  useEffect(() => {
+    loadRecentMessages(50).then(stored => {
+      const batch = stored.map(row => ({
+        id: row.id,
+        correlationId: row.correlation_id,
+        role: row.role as 'user' | 'assistant',
+        text: row.text,
+        status: 'done' as const,
+        timestamp: row.timestamp,
+        hasApproval: row.has_approval === 1,
+        approvalId: row.approval_id ?? undefined,
+      }));
+      prependMessages(batch);
+    });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Drain offline queue when WS reconnects
   useEffect(() => {
@@ -56,6 +76,8 @@ export default function ChatScreen() {
       drainOfflineQueue();
     }
   }, [wsStatus, isConnected]);
+
+  const hasInFlight = pendingSize > 0;
 
   const sendMessage = useCallback(async (text: string) => {
     const trimmed = text.trim();
@@ -128,8 +150,6 @@ export default function ChatScreen() {
     }
   }, [sending, isConnected, wsStatus, addMessage, updateMessage, addPending]);
 
-  const hasInFlight = pendingCorrelationIds.size > 0;
-
   return (
     <SafeAreaView style={styles.container} edges={['top']}>
       <View style={styles.header}>
@@ -150,7 +170,10 @@ export default function ChatScreen() {
           />
         </View>
 
-        <View style={styles.inputRow}>
+        <View
+          style={styles.inputRow}
+          onLayout={e => setInputBarHeight(e.nativeEvent.layout.height)}
+        >
           <VoiceInput
             onTranscript={text => {
               setInput(text);
@@ -164,7 +187,7 @@ export default function ChatScreen() {
             style={styles.textInput}
             value={input}
             onChangeText={setInput}
-            placeholder="Message Claw…"
+            placeholder="Message Claw… (type / for skills)"
             placeholderTextColor="#aaa"
             multiline
             maxLength={4000}
@@ -182,6 +205,14 @@ export default function ChatScreen() {
           </TouchableOpacity>
         </View>
       </KeyboardAvoidingView>
+
+      <SkillPicker
+        visible={pickerVisible}
+        query={pickerQuery}
+        onSelect={handleSkillSelect}
+        onDismiss={() => setInput('')}
+        bottomOffset={inputBarHeight}
+      />
     </SafeAreaView>
   );
 }

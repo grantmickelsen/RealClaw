@@ -12,6 +12,7 @@
     "build": "tsc --project tsconfig.json",
     "start": "node dist/index.js",
     "dev": "tsx watch src/index.ts",
+    "dev:infra": "docker compose up -d postgres claw_db redis browser manifest",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",

@@ -16,7 +16,6 @@ export function StreamingBubble({ correlationId }: Props) {
     s.messages.find(m => m.correlationId === correlationId)?.text ?? '',
   );
 
-  // Keep a ref buffer for incoming tokens; flush to displayed state every 80ms
   const buffer = useRef(storeText);
   const [displayed, setDisplayed] = useState(storeText);
 
@@ -25,13 +24,12 @@ export function StreamingBubble({ correlationId }: Props) {
   }, [storeText]);
 
   useEffect(() => {
+    // Compare inside the callback so the interval is never restarted on flush
     const interval = setInterval(() => {
-      if (buffer.current !== displayed) {
-        setDisplayed(buffer.current);
-      }
+      setDisplayed(prev => (buffer.current !== prev ? buffer.current : prev));
     }, 80);
     return () => clearInterval(interval);
-  }, [displayed]);
+  }, []); // mount/unmount only
 
   return (
     <View style={styles.row}>

@@ -70,10 +70,9 @@ export class RedisCancellationStore implements ICancellationStore {
  * Returns a Redis-backed store if REDIS_URL is provided, otherwise in-memory.
  * ioredis is loaded lazily so the package is not required when Redis is absent.
  */
-export function createCancellationStore(redisUrl?: string): ICancellationStore {
+export async function createCancellationStore(redisUrl?: string): Promise<ICancellationStore> {
   if (redisUrl) {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const Redis = require('ioredis') as typeof import('ioredis').default;
+    const { default: Redis } = await import('ioredis');
     return new RedisCancellationStore(new Redis(redisUrl));
   }
   return new InMemoryCancellationStore();

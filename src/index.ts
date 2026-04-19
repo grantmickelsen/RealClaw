@@ -352,12 +352,12 @@ async function bootstrap(): Promise<void> {
 
   // ─── WebSocket Session Manager + Cancellation Store ───
   const wsSessionManager = new WsSessionManager();
-  const cancellationStore = createCancellationStore(process.env.REDIS_URL);
+  const cancellationStore = await createCancellationStore(process.env.REDIS_URL);
 
   // ─── Redis client (optional — enables distributed locking, event bus, BullMQ, rate limiting) ───
   let redisClient: Redis | undefined;
   if (process.env.REDIS_URL) {
-    redisClient = new Redis(process.env.REDIS_URL, { lazyConnect: true, enableOfflineQueue: false });
+    redisClient = new Redis(process.env.REDIS_URL);
     redisClient.on('error', (err: Error) => log.error('[Redis] Connection error', { error: err.message }));
     redisClient.on('connect', () => log.info('[Redis] Connected'));
     log.info(`[Redis] Configured — host: ${new URL(process.env.REDIS_URL).hostname}`);
@@ -727,6 +727,113 @@ async function bootstrap(): Promise<void> {
       }
       const statuses = await mgr.getStatus();
       sendJson(res, 200, { integrations: statuses });
+      return;
+    }
+
+    // ─── GET /v1/preferences (JWT required) ─────────────────────────────────
+    if (req.method === 'GET' && url.pathname === '/v1/preferences') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+      if (!dbAvailable) {
+        sendJson(res, 503, { ok: false, error: 'Database not available' });
+        return;
+      }
+      const row = await query<{
+        primary_zip: string | null;
+        display_name: string | null;
+        brokerage: string | null;
+        phone: string | null;
+        llm_tier: string;
+        tone_prefs: Record<string, unknown>;
+        onboarding_done: boolean;
+      }>(
+        'SELECT primary_zip, display_name, brokerage, phone, llm_tier, tone_prefs, onboarding_done FROM tenants WHERE tenant_id = $1',
+        [auth.tenantId],
+      );
+      const t = row.rows[0];
+      sendJson(res, 200, {
+        primaryZip: t?.primary_zip ?? null,
+        displayName: t?.display_name ?? null,
+        brokerage: t?.brokerage ?? null,
+        phone: t?.phone ?? null,
+        llmTier: t?.llm_tier ?? 'balanced',
+        tonePrefs: t?.tone_prefs ?? {},
+        onboardingDone: t?.onboarding_done ?? false,
+      });
+      return;
+    }
+
+    // ─── PUT /v1/preferences (JWT required) ─────────────────────────────────
+    if (req.method === 'PUT' && url.pathname === '/v1/preferences') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+      if (!dbAvailable) {
+        sendJson(res, 503, { ok: false, error: 'Database not available' });
+        return;
+      }
+      let body: string;
+      try {
+        body = await readBodySafe(req);
+      } catch (err) {
+        const status = (err as { statusCode?: number }).statusCode === 413 ? 413 : 400;
+        sendJson(res, status, { ok: false, error: 'Failed to read request body' });
+        return;
+      }
+      const updates = JSON.parse(body) as {
+        primaryZip?: string;
+        displayName?: string;
+        brokerage?: string;
+        phone?: string;
+        llmTier?: string;
+        tonePrefs?: Record<string, unknown>;
+        onboardingDone?: boolean;
+      };
+      if (updates.primaryZip !== undefined && !/^\d{5}$/.test(updates.primaryZip)) {
+        sendJson(res, 400, { ok: false, error: 'primaryZip must be a 5-digit ZIP code' });
+        return;
+      }
+      if (updates.llmTier !== undefined && !['fast', 'balanced', 'best'].includes(updates.llmTier)) {
+        sendJson(res, 400, { ok: false, error: 'llmTier must be fast, balanced, or best' });
+        return;
+      }
+      // Build dynamic SET clause from provided fields only
+      const setClauses: string[] = [];
+      const values: unknown[] = [];
+      const fieldMap: Record<string, string> = {
+        primaryZip: 'primary_zip',
+        displayName: 'display_name',
+        brokerage: 'brokerage',
+        phone: 'phone',
+        llmTier: 'llm_tier',
+        tonePrefs: 'tone_prefs',
+        onboardingDone: 'onboarding_done',
+      };
+      for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
+        if (jsKey in updates) {
+          values.push((updates as Record<string, unknown>)[jsKey]);
+          setClauses.push(`${dbCol} = $${values.length}`);
+        }
+      }
+      if (setClauses.length === 0) {
+        sendJson(res, 200, { ok: true });
+        return;
+      }
+      values.push(auth.tenantId);
+      await query(
+        `UPDATE tenants SET ${setClauses.join(', ')} WHERE tenant_id = $${values.length}`,
+        values,
+      );
+      sendJson(res, 200, { ok: true });
       return;
     }
 

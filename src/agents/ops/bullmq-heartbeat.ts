@@ -98,7 +98,7 @@ export class BullMqHeartbeatScheduler {
     await this.stopForTenant(tenantId);
 
     const jitterSec = jitterOffsetSeconds(tenantId);
-    const queue = new Queue(`heartbeat:${tenantId}`, { connection: this.connection });
+    const queue = new Queue(`heartbeat_${tenantId}`, { connection: this.connection });
     this.queues.set(tenantId, queue);
 
     for (const schedule of config.schedules) {
@@ -118,7 +118,7 @@ export class BullMqHeartbeatScheduler {
     }
 
     const worker = new Worker<{ schedule: HeartbeatSchedule; tenantId: string }>(
-      `heartbeat:${tenantId}`,
+      `heartbeat_${tenantId}`,
       async (job) => {
         const { schedule, tenantId: tid } = job.data;
         const trigger: HeartbeatTrigger = {
@@ -164,7 +164,7 @@ export class BullMqHeartbeatScheduler {
 
   listScheduled(tenantId: string): string[] {
     return this.queues.has(tenantId)
-      ? [`heartbeat:${tenantId}`]
+      ? [`heartbeat_${tenantId}`]
       : [];
   }
 }

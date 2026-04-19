@@ -3,6 +3,7 @@ import { ModelTier } from '../../types/agents.js';
 import { IntegrationId } from '../../types/integrations.js';
 import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSection } from '../../types/messages.js';
 import type { RentCastIntegration } from '../../integrations/rentcast.js';
+import { query as dbQuery } from '../../db/postgres.js';
 
 const NOT_CONNECTED = 'MLS data not connected. Set CLAW_RENTCAST_API_KEY in .env to enable market intelligence.';
 
@@ -176,13 +177,21 @@ export class ResearchAgent extends BaseAgent {
       };
     }
 
-    // Use the client's primary zip from memory or a default
-    const clientZip = process.env.CLAW_PRIMARY_ZIP ?? '';
+    // Prefer DB-stored ZIP (set during onboarding), fall back to env var for local dev
+    let clientZip = '';
+    try {
+      const row = await dbQuery<{ primary_zip: string | null }>(
+        'SELECT primary_zip FROM tenants WHERE tenant_id = $1',
+        [this.tenantId],
+      );
+      clientZip = row.rows[0]?.primary_zip ?? '';
+    } catch { /* DB unavailable — fall through to env var */ }
+    if (!clientZip) clientZip = process.env.CLAW_PRIMARY_ZIP ?? '';
     if (!clientZip) {
       return {
         agentId: this.id,
         title: 'Market Intelligence',
-        content: 'Set CLAW_PRIMARY_ZIP in .env to see your market snapshot here.',
+        content: 'Set your primary market ZIP in the app settings to see your market snapshot here.',
         priority: 2,
       };
     }

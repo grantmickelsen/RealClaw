@@ -106,6 +106,8 @@ services:
       POSTGRES_USER: claw
       POSTGRES_PASSWORD: claw
       POSTGRES_DB: realclaw
+    ports:
+      - "127.0.0.1:5432:5432"
     volumes:
       - claw_pgdata:/var/lib/postgresql/data
     networks:

@@ -27,7 +27,7 @@ export class ManifestProvider extends LlmProvider {
 
   constructor(config: ProviderConfig) {
     super(config);
-    this.baseUrl = config.baseUrl;
+    this.baseUrl = process.env.CLAW_MANIFEST_ENDPOINT ?? config.baseUrl;
   }
 
   async complete(request: LlmRequest, _modelString: string): Promise<LlmResponse> {

@@ -1,16 +1,20 @@
 import '../global.css';
 import { useEffect, useCallback } from 'react';
-import { Stack, Redirect } from 'expo-router';
+import { Stack } from 'expo-router';
 import { useAuthStore } from '../store/auth';
-import { useWsStore } from '../store/ws';
+import { usePreferencesStore } from '../store/preferences';
 import { loadStoredTokens, storeTokens } from '../lib/auth';
 import { connect as wsConnect, disconnect as wsDisconnect } from '../lib/ws';
 import { enforceDeviceIntegrity } from '../lib/security';
+import { authedFetch } from '../lib/api';
 import { useAppState } from '../hooks/useAppState';
 
 export default function RootLayout() {
-  const { status, setTokens, clearTokens } = useAuthStore();
-  const wsStatus = useWsStore(s => s.status);
+  const status = useAuthStore(s => s.status);
+  const setTokens = useAuthStore(s => s.setTokens);
+  const clearTokens = useAuthStore(s => s.clearTokens);
+  const setPreferences = usePreferencesStore(s => s.setPreferences);
+  const clearPreferences = usePreferencesStore(s => s.clear);
 
   const handleForeground = useCallback(async () => {
     const compromised = await enforceDeviceIntegrity();
@@ -19,6 +23,7 @@ export default function RootLayout() {
 
   useAppState(handleForeground);
 
+  // Bootstrap once: read persisted tokens and set auth status
   useEffect(() => {
     async function init() {
       try {
@@ -44,26 +49,44 @@ export default function RootLayout() {
       }
     }
     init();
-  }, [setTokens, clearTokens]);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // WebSocket lifecycle: connect when authenticated, disconnect when not
   useEffect(() => {
-    if (status === 'authenticated' && wsStatus === 'disconnected') {
+    if (status === 'authenticated') {
       wsConnect();
-    } else if (status === 'unauthenticated' && wsStatus !== 'disconnected') {
+    } else if (status === 'unauthenticated') {
       wsDisconnect();
     }
-  }, [status, wsStatus]);
+  }, [status]);
+
+  // Preferences lifecycle: fetch when authenticated, clear when signed out
+  useEffect(() => {
+    if (status === 'authenticated') {
+      authedFetch('/v1/preferences')
+        .then(r => r.json())
+        .then((d: {
+          primaryZip?: string | null;
+          displayName?: string | null;
+          brokerage?: string | null;
+          phone?: string | null;
+          llmTier?: 'fast' | 'balanced' | 'best';
+          tonePrefs?: Record<string, unknown>;
+          onboardingDone?: boolean;
+        }) => setPreferences({ ...d, status: 'loaded' }))
+        .catch(() => setPreferences({ status: 'loaded' }));
+    } else if (status === 'unauthenticated') {
+      clearPreferences();
+    }
+  }, [status]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
-    <>
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="(auth)" />
-        <Stack.Screen name="(main)" />
-        <Stack.Screen name="approval/[id]" options={{ presentation: 'modal' }} />
-        <Stack.Screen name="oauth-callback" options={{ presentation: 'modal' }} />
-      </Stack>
-      {status !== 'authenticated' && <Redirect href="/(auth)/sign-in" />}
-      {status === 'authenticated' && <Redirect href="/(main)/chat" />}
-    </>
+    <Stack screenOptions={{ headerShown: false }}>
+      <Stack.Screen name="(auth)" />
+      <Stack.Screen name="(main)" />
+      <Stack.Screen name="approval/[id]" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="oauth-callback" options={{ presentation: 'modal' }} />
+      <Stack.Screen name="onboarding" options={{ animation: 'fade', headerShown: false }} />
+    </Stack>
   );
 }

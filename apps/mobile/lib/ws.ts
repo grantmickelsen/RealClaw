@@ -1,6 +1,7 @@
 import { useAuthStore } from '../store/auth';
 import { useWsStore } from '../store/ws';
 import { useChatStore } from '../store/chat';
+import { saveMessage } from '../lib/db';
 import { WS_URL } from '../constants/api';
 
 let socket: WebSocket | null = null;
@@ -117,22 +118,36 @@ function handleMessage(event: WsEvent): void {
     }
 
     case 'TASK_COMPLETE': {
-      // Flush any buffered stream tokens immediately
       const buffered = streamBuffers.get(event.correlationId);
       const hasApproval = !!(event.payload.hasApproval);
       const approvalId = (event.payload.approvalId as string | undefined) ?? undefined;
+      let finalText: string;
       if (buffered) {
-        useChatStore.getState().updateMessage(event.correlationId, { text: buffered, status: 'done', hasApproval, approvalId });
+        finalText = buffered;
         streamBuffers.delete(event.correlationId);
       } else {
-        const text = ((event.payload.text as string) ?? '').trim();
-        useChatStore.getState().updateMessage(event.correlationId, {
-          text: text || (useChatStore.getState().messages.find(m => m.correlationId === event.correlationId)?.text ?? ''),
+        const payloadText = ((event.payload.text as string) ?? '').trim();
+        finalText = payloadText || (useChatStore.getState().messages.find(m => m.correlationId === event.correlationId && m.role === 'assistant')?.text ?? '');
+      }
+      useChatStore.getState().updateMessage(event.correlationId, { text: finalText, status: 'done', hasApproval, approvalId });
+
+      // Persist the assistant message so it survives app restarts
+      const assistantMsg = useChatStore.getState().messages.find(m => m.correlationId === event.correlationId && m.role === 'assistant');
+      if (assistantMsg) {
+        void saveMessage({
+          id: assistantMsg.id,
+          correlation_id: event.correlationId,
+          role: 'assistant',
+          text: finalText,
           status: 'done',
-          hasApproval,
-          approvalId,
+          agent_id: assistantMsg.agentId ?? null,
+          has_approval: hasApproval ? 1 : 0,
+          approval_id: approvalId ?? null,
+          timestamp: assistantMsg.timestamp,
+          synced: 1,
         });
       }
+
       useWsStore.getState().removePending(event.correlationId);
       break;
     }
