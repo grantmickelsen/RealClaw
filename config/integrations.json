@@ -79,6 +79,24 @@
       "baseUrl": "https://api.rentcast.io",
       "rateLimitPerMinute": 5,
       "enabled": true
+    },
+    {
+      "id": "crmls",
+      "authMethod": "oauth2",
+      "owningAgent": "showings",
+      "baseUrl": "https://api.crmls.org",
+      "rateLimitPerMinute": 30,
+      "enabled": false,
+      "healthCheckEndpoint": "/reso/odata/Property?$top=1&$select=ListingKey"
+    },
+    {
+      "id": "google_maps",
+      "authMethod": "api_key",
+      "owningAgent": "showings",
+      "baseUrl": "https://maps.googleapis.com",
+      "rateLimitPerMinute": 50,
+      "enabled": false,
+      "healthCheckEndpoint": "/maps/api/geocode/json"
     }
   ]
 }

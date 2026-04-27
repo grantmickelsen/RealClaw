@@ -81,7 +81,10 @@
       "Bash(ip addr *)",
       "Bash(awk '{print $2}')",
       "Bash(grep -v \"^\\\\s*$\")",
-      "Bash(pkill -f ngrok)"
+      "Bash(pkill -f ngrok)",
+      "Bash(docker exec *)",
+      "Bash(grep -v \"^$\")",
+      "Bash(node node_modules/.bin/vitest run)"
     ],
     "additionalDirectories": [
       "/home/grant/.claude/plans",

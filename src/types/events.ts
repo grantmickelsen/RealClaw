@@ -18,7 +18,10 @@ export type EventType =
   | 'compliance.flag'
   | 'knowledge.updated'
   | 'system.error'
-  | 'system.integration_down';
+  | 'system.integration_down'
+  | 'showing.access_confirmed'
+  | 'showing.day_completed'
+  | 'showing.criteria_updated';
 
 export interface SystemEvent {
   messageId: string;

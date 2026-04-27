@@ -10,6 +10,7 @@ export enum AgentId {
   KNOWLEDGE_BASE = 'knowledge_base',
   OPEN_HOUSE = 'open_house',
   COMPLIANCE = 'compliance',
+  SHOWINGS = 'showings',
 }
 
 export enum ModelTier {
@@ -101,7 +102,7 @@ export const AGENT_CONFIGS: Record<AgentId, AgentConfig> = {
     soulMdPath: './src/agents/relationship/SOUL.md',
     workspacePath: './agent-relationship',
     capabilities: [
-      'contact_memory', 'lead_scoring', 'lead_decay',
+      'contact_memory', 'contact_dossier', 'lead_scoring', 'lead_decay',
       'sentiment_analysis', 'sphere_nurture',
       'referral_tracking', 'pipeline_tracking',
       'contact_enrichment', 'segmentation',
@@ -127,7 +128,7 @@ export const AGENT_CONFIGS: Record<AgentId, AgentConfig> = {
       'listing_description', 'social_batch', 'flyer_populate',
       'market_report', 'neighborhood_guide', 'virtual_staging',
       'email_campaign_content', 'presentation_materials',
-      'just_sold', 'video_script',
+      'just_sold', 'video_script', 'vision_extract', 'studio_generate',
     ],
     subscribesTo: [],
     queryTargets: [AgentId.KNOWLEDGE_BASE, AgentId.COMPLIANCE, AgentId.RESEARCH],
@@ -162,8 +163,9 @@ export const AGENT_CONFIGS: Record<AgentId, AgentConfig> = {
       'timeline_manage', 'document_track', 'escrow_monitor',
       'closing_coordinate', 'post_closing', 'contract_draft',
       'client_portal', 'multi_transaction', 'disclosure_track',
+      'deal_ingest', 'deal_create', 'deal_list', 'deal_status', 'deadline_monitor',
     ],
-    subscribesTo: [],
+    subscribesTo: ['transaction.started', 'transaction.milestone', 'transaction.closed'] as EventType[],
     queryTargets: [AgentId.COMPLIANCE, AgentId.RELATIONSHIP, AgentId.KNOWLEDGE_BASE],
     writeTargets: ['transactions', 'contacts'],
   },
@@ -233,9 +235,35 @@ export const AGENT_CONFIGS: Record<AgentId, AgentConfig> = {
       'content_scan', 'disclosure_audit',
       'wire_fraud_warn', 'license_track',
       'fair_housing_check', 'regulatory_monitor',
+      'property_disclosure_check',
     ],
     subscribesTo: ['listing.new'],
     queryTargets: [],
     writeTargets: ['system'],
+  },
+  [AgentId.SHOWINGS]: {
+    id: AgentId.SHOWINGS,
+    displayName: 'Showings Agent',
+    defaultModel: ModelTier.BALANCED,
+    dailyTokenBudget: 400_000,
+    timeoutMs: 90_000,
+    soulMdPath: './src/agents/showings/SOUL.md',
+    workspacePath: './agent-showings',
+    capabilities: [
+      'property_match',           // search CRMLS + batch-score vs criteria
+      'showing_day_propose',      // find open calendar slots, propose day options
+      'showing_access_negotiate', // dispatch access requests in parallel
+      'route_optimize',           // VRPTW heuristic + Maps URL
+      'field_oracle',             // deep research dossier per property
+      'post_tour_report',         // dual reports (agent brief + client recap)
+    ],
+    subscribesTo: [
+      'contact.created',
+      'contact.updated',
+      'showing.access_confirmed',
+      'showing.day_completed',
+    ],
+    queryTargets: [AgentId.RESEARCH, AgentId.CALENDAR, AgentId.RELATIONSHIP, AgentId.KNOWLEDGE_BASE],
+    writeTargets: ['listings', 'contacts'],
   },
 };

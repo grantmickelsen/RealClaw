@@ -19,6 +19,7 @@ export enum IntegrationId {
   VIRTUAL_STAGING = 'virtual_staging',
   BROWSER = 'browser',
   RENTCAST = 'rentcast',
+  GOOGLE_MAPS = 'google_maps',
 }
 
 export type AuthMethod = 'oauth2' | 'api_key' | 'credentials' | 'local';
@@ -117,4 +118,11 @@ export interface NormalizedListing {
   listingDate: string;
   soldDate: string | null;
   soldPrice: number | null;
+  // MLS-only fields (populated by CRMLS, empty on RentCast)
+  showingInstructions?: string;
+  showingType?: 'go_direct' | 'contact_agent' | 'platform_booking' | 'unknown';
+  latitude?: number;
+  longitude?: number;
+  pool?: boolean;
+  garageSpaces?: number;
 }

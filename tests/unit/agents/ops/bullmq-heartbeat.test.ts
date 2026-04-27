@@ -103,7 +103,7 @@ describe('BullMqHeartbeatScheduler', () => {
       schedules: [{ name: 'morning_briefing', cron: '0 7 * * *', targets: 'all', parameters: {}, enabled: true }],
       timezone: 'America/Los_Angeles',
     });
-    expect(mockQueueCtor).toHaveBeenCalledWith('heartbeat:tenant1', { connection });
+    expect(mockQueueCtor).toHaveBeenCalledWith('heartbeat_tenant1', { connection });
   });
 
   it('loadForTenant creates a Worker with the correct queue name', async () => {
@@ -112,7 +112,7 @@ describe('BullMqHeartbeatScheduler', () => {
       schedules: [{ name: 'morning_briefing', cron: '0 7 * * *', targets: 'all', parameters: {} }],
       timezone: 'America/Los_Angeles',
     });
-    expect(mockWorkerCtor).toHaveBeenCalledWith('heartbeat:tenant1', expect.any(Function), { connection });
+    expect(mockWorkerCtor).toHaveBeenCalledWith('heartbeat_tenant1', expect.any(Function), { connection });
   });
 
   it('loadForTenant adds a repeatable job per enabled schedule with stable jobId', async () => {
@@ -197,7 +197,7 @@ describe('BullMqHeartbeatScheduler', () => {
       schedules: [{ name: 'task', cron: '0 7 * * *', targets: 'all', parameters: {} }],
       timezone: 'UTC',
     });
-    expect(scheduler.listScheduled('list-tenant')).toEqual(['heartbeat:list-tenant']);
+    expect(scheduler.listScheduled('list-tenant')).toEqual(['heartbeat_list-tenant']);
   });
 
   it('listScheduled returns empty array for unknown tenant', () => {

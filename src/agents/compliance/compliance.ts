@@ -70,6 +70,42 @@ export class ComplianceAgent extends BaseAgent {
           return this.successResult(request, { text }, { processingMs: Date.now() - start });
         }
 
+        case 'property_disclosure_check': {
+          const yearBuilt            = request.data['yearBuilt'] as number | null ?? null;
+          const hasHoa               = Boolean(request.data['hasHoa']);
+          const sellerForeignPerson  = Boolean(request.data['sellerForeignPerson']);
+          const state                = String(request.data['state'] ?? '');
+
+          let disclosureRules: {
+            id: string; condition: { field: string; operator: string; value: unknown };
+            docType: string; name: string; isBlocking: boolean; applicableStates: string[];
+          }[] = [];
+          try {
+            const raw = await fs.readFile('./config/disclosure-rules.json', 'utf-8');
+            disclosureRules = (JSON.parse(raw) as { rules: typeof disclosureRules }).rules;
+          } catch { /* use empty list */ }
+
+          const attrs: Record<string, unknown> = { yearBuilt, hasHoa, sellerForeignPerson, state };
+          const triggered = disclosureRules.filter(rule => {
+            if (rule.applicableStates[0] !== 'ALL' && !rule.applicableStates.includes(state)) return false;
+            const actual = attrs[rule.condition.field] ?? null;
+            if (actual === null) return false;
+            if (rule.condition.operator === 'eq')  return actual === rule.condition.value;
+            if (rule.condition.operator === 'neq') return actual !== rule.condition.value;
+            if (rule.condition.operator === 'lte') return (actual as number) <= (rule.condition.value as number);
+            if (rule.condition.operator === 'gte') return (actual as number) >= (rule.condition.value as number);
+            return false;
+          });
+
+          return this.successResult(request, {
+            disclosures: triggered.map(r => ({ docType: r.docType, name: r.name, isBlocking: r.isBlocking })),
+            count: triggered.length,
+            text: triggered.length
+              ? `${triggered.length} required disclosure(s): ${triggered.map(r => r.name).join(', ')}`
+              : 'No special disclosures required based on property attributes.',
+          }, { processingMs: Date.now() - start });
+        }
+
         case 'heartbeat': {
           return this.successResult(request, { status: 'ready' }, { processingMs: Date.now() - start });
         }

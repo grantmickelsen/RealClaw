@@ -46,6 +46,44 @@ export class RelationshipAgent extends BaseAgent {
           return this.successResult(request, { text: memResult.content, contactPath: topMatch.path }, { processingMs: Date.now() - start });
         }
 
+        case 'contact_dossier': {
+          const contactId = String(request.data['contactId'] ?? '');
+          if (!contactId) return this.failureResult(request, new Error('contactId required'));
+
+          const profileMem = await this.readMemory({ path: `contacts/${contactId}.md` });
+          const profileContent = profileMem.content || 'No profile found.';
+
+          const prompt = `You are a real estate CRM assistant. Based on this contact profile, produce:
+1. A 2-3 sentence narrative paragraph summarizing who this person is, what they want, and the most recent relevant interaction. Write in second person ("They are looking for..."). Be specific — use exact figures, names, preferences from the profile.
+2. Exactly 2-3 suggested next actions.
+
+Profile:
+${profileContent}
+
+Return ONLY valid JSON with no markdown or code fences:
+{
+  "narrative": "string",
+  "suggestedActions": [
+    { "label": "string", "actionType": "send_sms|send_email|modify_calendar", "preview": "string" }
+  ]
+}`;
+
+          const response = await this.callLlm(prompt, ModelTier.BALANCED);
+          let parsed: { narrative: string; suggestedActions: Array<{ label: string; actionType: string; preview: string }> };
+          try {
+            const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+            if (!jsonMatch) throw new Error('no JSON found');
+            parsed = JSON.parse(jsonMatch[0]) as typeof parsed;
+          } catch {
+            return this.failureResult(request, new Error('Narrative parse failed'));
+          }
+          return this.successResult(
+            request,
+            { text: JSON.stringify(parsed), narrative: parsed.narrative, suggestedActions: parsed.suggestedActions },
+            { processingMs: Date.now() - start },
+          );
+        }
+
         case 'lead_status': {
           const name = request.instructions;
           const results = await this.memSearch.search({ domain: 'contacts', query: name, maxResults: 1 });

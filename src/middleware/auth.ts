@@ -1,9 +1,23 @@
 import jwt from 'jsonwebtoken';
 import type { IncomingMessage } from 'http';
 
+export type SubscriptionTier = 'starter' | 'professional' | 'brokerage';
+export type SubscriptionStatus = 'trialing' | 'active' | 'past_due' | 'cancelled' | 'paused';
+
 export interface AuthContext {
   tenantId: string;
   userId: string;
+  subscriptionTier: SubscriptionTier;
+  subscriptionStatus: SubscriptionStatus;
+}
+
+/** Returns true for tenants that should have Professional feature access. */
+export function isProfessionalAccess(ctx: AuthContext): boolean {
+  const { subscriptionTier, subscriptionStatus } = ctx;
+  const isActive = subscriptionStatus === 'trialing'
+    || subscriptionStatus === 'active'
+    || subscriptionStatus === 'past_due'; // grace period
+  return isActive && (subscriptionTier === 'professional' || subscriptionTier === 'brokerage');
 }
 
 export class AuthError extends Error {
@@ -60,7 +74,10 @@ export function verifyJwt(authHeader: string | undefined): AuthContext {
     throw new AuthError('Token missing tenantId or sub claim');
   }
 
-  return { tenantId, userId };
+  const subscriptionTier = (payload['subscriptionTier'] as SubscriptionTier | undefined) ?? 'starter';
+  const subscriptionStatus = (payload['subscriptionStatus'] as SubscriptionStatus | undefined) ?? 'trialing';
+
+  return { tenantId, userId, subscriptionTier, subscriptionStatus };
 }
 
 /**
@@ -91,7 +108,12 @@ export function extractTenant(req: IncomingMessage): AuthContext | null {
   if (!process.env.JWT_SECRET && process.env.NODE_ENV !== 'production') {
     const tenantId = req.headers['x-tenant-id'];
     if (tenantId && typeof tenantId === 'string') {
-      return { tenantId, userId: 'dev-user' };
+      return {
+        tenantId,
+        userId: 'dev-user',
+        subscriptionTier: 'professional',
+        subscriptionStatus: 'trialing',
+      };
     }
   }
 
@@ -99,19 +121,21 @@ export function extractTenant(req: IncomingMessage): AuthContext | null {
 }
 
 /**
- * Sign a JWT for the given tenant and user.
- * Used in auth endpoints (POST /v1/auth/apple, POST /v1/auth/google).
+ * Sign a JWT for the given tenant and user, including subscription claims.
+ * Used in auth endpoints (POST /v1/auth/apple, POST /v1/auth/google, /v1/auth/refresh).
  */
 export function signJwt(
   tenantId: string,
   userId: string,
   expiresIn: string | number = '15m',
+  subscriptionTier: SubscriptionTier = 'starter',
+  subscriptionStatus: SubscriptionStatus = 'trialing',
 ): string {
   const secret = process.env.JWT_SECRET;
   if (!secret) throw new Error('JWT_SECRET not set');
 
   return jwt.sign(
-    { tenantId },
+    { tenantId, subscriptionTier, subscriptionStatus },
     secret,
     {
       subject: userId,

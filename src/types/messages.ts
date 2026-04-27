@@ -24,6 +24,7 @@ export interface InboundMessage extends BaseMessage {
     media: MediaAttachment[];
   };
   replyTo: string | null;
+  structuredData?: Record<string, unknown>;
 }
 
 export interface MediaAttachment {
@@ -74,7 +75,8 @@ export type ApprovalCategory =
   | 'modify_calendar'
   | 'post_social'
   | 'send_document'
-  | 'financial_action';
+  | 'financial_action'
+  | 'approve_route';
 
 // ─── Agent → Coordinator ───
 

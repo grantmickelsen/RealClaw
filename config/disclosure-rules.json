@@ -1,0 +1,40 @@
+{
+  "rules": [
+    {
+      "id": "lead_paint",
+      "description": "Lead-Based Paint Disclosure (federal — pre-1978 homes)",
+      "condition": { "field": "yearBuilt", "operator": "lte", "value": 1978 },
+      "docType": "LEAD_PAINT",
+      "name": "Lead-Based Paint Disclosure",
+      "isBlocking": true,
+      "applicableStates": ["ALL"]
+    },
+    {
+      "id": "hoa_ccr",
+      "description": "HOA CC&R 3-Day Review Period",
+      "condition": { "field": "hasHoa", "operator": "eq", "value": true },
+      "docType": "HOA_CCR",
+      "name": "HOA CC&R Review (3-day contingency)",
+      "isBlocking": true,
+      "applicableStates": ["ALL"]
+    },
+    {
+      "id": "firpta",
+      "description": "FIRPTA Withholding Consultation (foreign seller)",
+      "condition": { "field": "sellerForeignPerson", "operator": "eq", "value": true },
+      "docType": "FIRPTA",
+      "name": "FIRPTA Withholding Review",
+      "isBlocking": true,
+      "applicableStates": ["ALL"]
+    },
+    {
+      "id": "tds_ca",
+      "description": "Transfer Disclosure Statement (California — seller-occupied or recently vacated)",
+      "condition": { "field": "state", "operator": "eq", "value": "CA" },
+      "docType": "TDS",
+      "name": "Transfer Disclosure Statement",
+      "isBlocking": true,
+      "applicableStates": ["CA"]
+    }
+  ]
+}

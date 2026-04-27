@@ -231,7 +231,7 @@ export class Coordinator {
       taskType: decision.intent,
       instructions: sanitized.sanitizedText,
       context: { clientId: this.clientConfig?.clientId ?? 'default' },
-      data: {},
+      data: message.structuredData ?? {},
       constraints: {
         maxTokens: 4096,
         modelOverride: null,
@@ -396,6 +396,84 @@ export class Coordinator {
 
   registerDispatcher(agent: import('../agents/base-agent.js').BaseAgent): void {
     this.dispatcher.registerAgent(agent);
+  }
+
+  async extractSmsSignals(
+    messageId: string,
+    contactId: string,
+    body: string,
+    wsPusher: WsPusher,
+  ): Promise<void> {
+    const prompt = `You are analyzing an SMS from a real estate prospect. Extract structured signals.
+
+Message: "${body}"
+
+Return ONLY valid JSON (no markdown):
+{
+  "budget": { "value": "<amount or null>", "confidence": "high|medium|low" } | null,
+  "timeline": { "value": "<description or null>", "confidence": "high|medium|low" } | null,
+  "preferences": ["<preference>"],
+  "objections": ["<objection>"],
+  "competitorMentions": ["<name>"],
+  "urgencyLevel": "low|medium|high|critical",
+  "sentimentArc": "positive|neutral|negative"
+}
+
+Only include budget/timeline if clearly stated. Empty arrays are fine.`;
+
+    let signals: Record<string, unknown> = { urgencyLevel: 'low', sentimentArc: 'neutral', preferences: [], objections: [], competitorMentions: [] };
+    try {
+      const response = await this.llmRouter.complete({
+        model: ModelTier.FAST,
+        systemPrompt: 'You are a real estate AI that extracts structured data from prospect messages. Return only valid JSON.',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.1,
+        maxOutputTokens: 512,
+      }, this.agentId);
+      const match = response.text.match(/\{[\s\S]*\}/);
+      if (match) signals = JSON.parse(match[0]) as Record<string, unknown>;
+    } catch (err) {
+      log.warn('[Coordinator] SMS signal extraction LLM call failed', { error: String(err) });
+    }
+
+    try {
+      if (this.queryFn) {
+        await this.queryFn(
+          `UPDATE sms_messages SET extracted_signals = $1 WHERE id = $2`,
+          [JSON.stringify(signals), messageId],
+        );
+
+        const urgency = String(signals['urgencyLevel'] ?? 'low');
+        const competitorMentions = (signals['competitorMentions'] as string[] | undefined) ?? [];
+        const sentimentArc = String(signals['sentimentArc'] ?? 'neutral');
+
+        if (urgency === 'high' || urgency === 'critical' || competitorMentions.length > 0 || sentimentArc === 'negative') {
+          let reason = urgency === 'critical' || urgency === 'high'
+            ? 'may be ready to move — respond today'
+            : competitorMentions.length > 0
+              ? `mentioned ${competitorMentions[0]} — may be shopping agents`
+              : 'tone has shifted — check in';
+          const briefingId = `sms-${messageId}`;
+          await this.queryFn(
+            `INSERT INTO briefing_items (id, tenant_id, type, urgency_score, summary_text, contact_id)
+             VALUES ($1, $2, 'sms_signal', $3, $4, $5)
+             ON CONFLICT DO NOTHING`,
+            [briefingId, this.tenantId, urgency === 'critical' ? 9 : urgency === 'high' ? 7 : 5,
+             `Contact texted — ${reason}`, contactId],
+          );
+        }
+      }
+    } catch (err) {
+      log.warn('[Coordinator] SMS signal DB write failed', { error: String(err) });
+    }
+
+    wsPusher.push(this.tenantId, {
+      type: 'SMS_SIGNALS_READY',
+      correlationId: messageId,
+      tenantId: this.tenantId,
+      timestamp: new Date().toISOString(),
+      payload: { messageId, contactId, extractedSignals: signals },
+    });
   }
 
   private async reply(message: InboundMessage, text: string): Promise<void> {

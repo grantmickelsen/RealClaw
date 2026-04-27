@@ -8,17 +8,24 @@ import {
   Alert,
   Linking,
   TextInput,
+  Modal,
+  Switch,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import type { Href } from 'expo-router';
+import * as SecureStore from 'expo-secure-store';
 import { useAuthStore } from '../../store/auth';
 import { useIntegrationsStore } from '../../store/integrations';
 import { usePreferencesStore } from '../../store/preferences';
+import { useKioskStore, KIOSK_BIOMETRIC_KEY } from '../../store/kiosk';
+import { useSubscriptionStore } from '../../store/subscription';
 import { clearStoredTokens } from '../../lib/auth';
 import { authedFetch } from '../../lib/api';
 import { IntegrationRow } from '../../components/IntegrationRow';
 import { API_BASE_URL } from '../../constants/api';
+
+const PIN_STORE_KEY = 'claw_kiosk_pin';
 
 // ─── Editable row ─────────────────────────────────────────────────────────────
 
@@ -86,12 +93,96 @@ function EditableRow({
   );
 }
 
+// ─── Kiosk PIN modal ──────────────────────────────────────────────────────────
+
+function KioskPinModal({ visible, onDone }: { visible: boolean; onDone(): void }) {
+  const [pin, setPin] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [error, setError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => { if (visible) { setPin(''); setConfirm(''); setError(''); } }, [visible]);
+
+  async function save() {
+    if (pin.length !== 4) { setError('PIN must be 4 digits'); return; }
+    if (pin !== confirm)  { setError('PINs do not match');    return; }
+    setSaving(true);
+    await SecureStore.setItemAsync(PIN_STORE_KEY, pin);
+    setSaving(false);
+    Alert.alert('PIN Updated', 'Your kiosk PIN has been saved.');
+    onDone();
+  }
+
+  return (
+    <Modal visible={visible} transparent animationType="fade" onRequestClose={onDone}>
+      <View style={pinModalStyles.overlay}>
+        <View style={pinModalStyles.box}>
+          <Text style={pinModalStyles.title}>Set Kiosk PIN</Text>
+          <Text style={pinModalStyles.hint}>Enter a 4-digit PIN for Kiosk agent mode</Text>
+          <TextInput
+            style={pinModalStyles.input}
+            value={pin}
+            onChangeText={v => { setPin(v.replace(/\D/g, '').slice(0, 4)); setError(''); }}
+            keyboardType="number-pad"
+            secureTextEntry
+            placeholder="• • • •"
+            placeholderTextColor="#ccc"
+            maxLength={4}
+            autoFocus
+          />
+          <TextInput
+            style={pinModalStyles.input}
+            value={confirm}
+            onChangeText={v => { setConfirm(v.replace(/\D/g, '').slice(0, 4)); setError(''); }}
+            keyboardType="number-pad"
+            secureTextEntry
+            placeholder="Confirm PIN"
+            placeholderTextColor="#ccc"
+            maxLength={4}
+          />
+          {error ? <Text style={pinModalStyles.error}>{error}</Text> : null}
+          <TouchableOpacity
+            style={[pinModalStyles.btn, (pin.length < 4 || saving) && pinModalStyles.btnDisabled]}
+            onPress={save}
+            disabled={pin.length < 4 || saving}
+          >
+            <Text style={pinModalStyles.btnText}>{saving ? 'Saving…' : 'Save PIN'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity onPress={onDone} style={pinModalStyles.cancel}>
+            <Text style={pinModalStyles.cancelText}>Cancel</Text>
+          </TouchableOpacity>
+        </View>
+      </View>
+    </Modal>
+  );
+}
+
 // ─── Main screen ──────────────────────────────────────────────────────────────
 
 export default function SettingsScreen() {
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinSet, setPinSet] = useState(false);
+
+  const requireBiometric = useKioskStore(s => s.requireBiometricForKiosk);
+  const setRequireBiometric = useKioskStore(s => s.setRequireBiometric);
+
+  const subscriptionTier   = useSubscriptionStore(s => s.tier);
+  const subscriptionStatus = useSubscriptionStore(s => s.status);
+  const isTrialing         = useSubscriptionStore(s => s.isTrialing);
+  const trialEndsAt        = useSubscriptionStore(s => s.trialEndsAt);
+  const setDevOverride     = useSubscriptionStore(s => s.setDevOverride);
+  const devTierOverride    = useSubscriptionStore(s => s.devTierOverride);
+
   const { clearTokens, tenantId } = useAuthStore();
   const { statuses, setStatuses } = useIntegrationsStore();
   const { displayName, brokerage, phone, primaryZip, llmTier, setPreferences } = usePreferencesStore();
+
+  useEffect(() => {
+    SecureStore.getItemAsync(PIN_STORE_KEY).then(v => setPinSet(!!v)).catch(() => {});
+    SecureStore.getItemAsync(KIOSK_BIOMETRIC_KEY)
+      .then(v => { if (v !== null) setRequireBiometric(v === '1'); })
+      .catch(() => {});
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadIntegrations = useCallback(async () => {
     try {
@@ -233,11 +324,61 @@ export default function SettingsScreen() {
           </View>
         )}
 
+        {/* ── Kiosk ── */}
+        <Text style={styles.sectionHeader}>Open House Kiosk</Text>
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <View style={styles.rowTextBlock}>
+              <Text style={styles.rowLabel}>Require Biometrics to Start</Text>
+              <Text style={styles.rowSubtitle}>
+                Turn off if handing the phone directly — skips Face ID / PIN when entering kiosk mode
+              </Text>
+            </View>
+            <Switch
+              value={requireBiometric}
+              onValueChange={v => {
+                setRequireBiometric(v);
+                SecureStore.setItemAsync(KIOSK_BIOMETRIC_KEY, v ? '1' : '0').catch(() => {});
+              }}
+              trackColor={{ false: '#e0e0e0', true: '#0066FF' }}
+              thumbColor="#fff"
+            />
+          </View>
+          <View style={styles.divider} />
+          <TouchableOpacity style={styles.row} onPress={() => setShowPinModal(true)}>
+            <Text style={styles.rowLabel}>Kiosk PIN</Text>
+            <Text style={styles.rowValue}>{pinSet ? 'Change PIN →' : 'Set PIN →'}</Text>
+          </TouchableOpacity>
+        </View>
+
+        {/* ── Subscription ── */}
+        <Text style={styles.sectionHeader}>Subscription</Text>
+        <View style={styles.card}>
+          <TouchableOpacity style={styles.row} onPress={() => router.push('/(main)/subscription' as Href)}>
+            <View style={styles.rowTextBlock}>
+              <Text style={styles.rowLabel}>
+                {subscriptionTier === 'professional' ? 'Professional' : subscriptionTier === 'brokerage' ? 'Brokerage' : 'Starter'}
+              </Text>
+              <Text style={styles.rowSubtitle}>
+                {isTrialing && trialEndsAt
+                  ? `Free trial — ${Math.max(0, Math.ceil((new Date(trialEndsAt).getTime() - Date.now()) / 86_400_000))} days left`
+                  : subscriptionStatus === 'active' ? 'Active' : subscriptionStatus}
+              </Text>
+            </View>
+            <Text style={styles.rowValue}>Manage →</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* ── Account ── */}
         <Text style={styles.sectionHeader}>Account</Text>
         <TouchableOpacity style={styles.signOutButton} onPress={handleSignOut}>
           <Text style={styles.signOutText}>Sign Out</Text>
         </TouchableOpacity>
+
+        <KioskPinModal
+          visible={showPinModal}
+          onDone={() => { setShowPinModal(false); setPinSet(true); }}
+        />
 
         {/* ── Developer (dev builds only) ── */}
         {__DEV__ && (
@@ -269,6 +410,30 @@ export default function SettingsScreen() {
                 }}
               >
                 <Text style={styles.rowLabel}>Reset Onboarding</Text>
+                <Text style={styles.rowValue}>→</Text>
+              </TouchableOpacity>
+              <View style={styles.divider} />
+              <TouchableOpacity
+                style={styles.row}
+                onPress={() => {
+                  Alert.alert(
+                    'Override Subscription Tier',
+                    `Current: ${devTierOverride ?? subscriptionTier} (${devTierOverride ? 'overridden' : 'real'})\n\nChoose a tier to simulate:`,
+                    [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: '✦ Professional', onPress: () => { setDevOverride('professional'); Alert.alert('Dev', 'Tier set to Professional'); } },
+                      { text: 'Starter', onPress: () => { setDevOverride('starter'); Alert.alert('Dev', 'Tier set to Starter'); } },
+                      { text: 'Clear Override', onPress: () => { setDevOverride(null); Alert.alert('Dev', 'Override cleared'); } },
+                    ],
+                  );
+                }}
+              >
+                <View style={styles.rowTextBlock}>
+                  <Text style={styles.rowLabel}>Subscription Override</Text>
+                  <Text style={styles.rowSubtitle}>
+                    {devTierOverride ? `Overriding to: ${devTierOverride}` : 'No override active'}
+                  </Text>
+                </View>
                 <Text style={styles.rowValue}>→</Text>
               </TouchableOpacity>
             </View>
@@ -320,6 +485,8 @@ const styles = StyleSheet.create({
   rowLabel: { fontSize: 15, color: '#1a1a1a', fontWeight: '500' },
   rowValue: { fontSize: 15, color: '#0066FF' },
   rowValueEmpty: { fontSize: 15, color: '#bbb' },
+  rowTextBlock: { flex: 1, paddingRight: 12 },
+  rowSubtitle: { fontSize: 12, color: '#9CA3AF', marginTop: 2, lineHeight: 16 },
   editControls: { flexDirection: 'row', alignItems: 'center', gap: 8, marginTop: 8 },
   inlineInput: {
     flex: 1,
@@ -360,4 +527,51 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   signOutText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+});
+
+const pinModalStyles = StyleSheet.create({
+  overlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+  },
+  box: {
+    backgroundColor: '#fff',
+    borderRadius: 20,
+    padding: 28,
+    width: '100%',
+    maxWidth: 360,
+    alignItems: 'center',
+    gap: 10,
+  },
+  title: { fontSize: 20, fontWeight: '700', color: '#1a1a1a' },
+  hint: { fontSize: 14, color: '#888', textAlign: 'center' },
+  input: {
+    width: '100%',
+    backgroundColor: '#f5f5fa',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    paddingVertical: 14,
+    fontSize: 22,
+    textAlign: 'center',
+    letterSpacing: 12,
+    color: '#1a1a1a',
+    borderWidth: 1,
+    borderColor: '#e0e0e0',
+  },
+  error: { fontSize: 14, color: '#EF4444', fontWeight: '500' },
+  btn: {
+    width: '100%',
+    backgroundColor: '#0066FF',
+    borderRadius: 12,
+    paddingVertical: 14,
+    alignItems: 'center',
+    marginTop: 4,
+  },
+  btnDisabled: { opacity: 0.45 },
+  btnText: { color: '#fff', fontSize: 16, fontWeight: '700' },
+  cancel: { paddingVertical: 8 },
+  cancelText: { color: '#9CA3AF', fontSize: 14 },
 });

@@ -30,6 +30,9 @@ const WEB_SHIMS = {
   'expo-secure-store':                         'shims/expo-secure-store.js',
   'expo-apple-authentication':                 'shims/expo-apple-authentication.js',
   '@react-native-google-signin/google-signin': 'shims/google-signin.js',
+  'expo-contacts':                             'shims/expo-contacts.js',
+  '@react-native-voice/voice':                 'shims/react-native-voice.js',
+  'react-native-purchases':                    'shims/react-native-purchases.js',
 };
 
 // Packages requiring compiled native modules not present in Expo Go.

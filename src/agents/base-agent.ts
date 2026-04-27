@@ -21,6 +21,11 @@ import type { AuditEntry } from '../types/messages.js';
 import type { IntegrationManager } from '../integrations/integration-manager.js';
 import type { BaseIntegration } from '../integrations/base-integration.js';
 import type { IntegrationId } from '../types/integrations.js';
+import type { WsEnvelope } from '../types/ws.js';
+
+export interface WsPusher {
+  push(tenantId: string, envelope: WsEnvelope): void;
+}
 
 export abstract class BaseAgent {
   readonly id: AgentId;
@@ -35,6 +40,7 @@ export abstract class BaseAgent {
   // Agent registry for cross-agent queries
   private agentRegistry?: Map<AgentId, BaseAgent>;
   private integrationManager?: IntegrationManager;
+  private wsPusher?: WsPusher;
 
   constructor(
     config: AgentConfig,
@@ -59,6 +65,24 @@ export abstract class BaseAgent {
 
   setIntegrationManager(manager: IntegrationManager): void {
     this.integrationManager = manager;
+  }
+
+  setWsPusher(pusher: WsPusher): void {
+    this.wsPusher = pusher;
+  }
+
+  protected pushWsEvent(
+    type: WsEnvelope['type'],
+    correlationId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    this.wsPusher?.push(this.tenantId, {
+      type,
+      correlationId,
+      tenantId: this.tenantId,
+      timestamp: new Date().toISOString(),
+      payload,
+    });
   }
 
   protected getIntegration<T extends BaseIntegration>(id: IntegrationId): T | null {

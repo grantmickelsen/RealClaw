@@ -3,6 +3,12 @@ import { TransactionAgent } from '../../../src/agents/transaction/transaction.js
 import { AgentId, ModelTier } from '../../../src/types/agents.js';
 import type { TaskRequest, AgentQuery } from '../../../src/types/messages.js';
 
+const { mockDbQuery } = vi.hoisted(() => ({
+  mockDbQuery: vi.fn().mockResolvedValue({ rows: [], rowCount: 0 }),
+}));
+
+vi.mock('../../../src/db/postgres.js', () => ({ query: mockDbQuery }));
+
 const mockLlmRouter = {
   complete: vi.fn().mockResolvedValue({
     text: 'LLM response text',

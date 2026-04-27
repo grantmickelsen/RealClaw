@@ -87,6 +87,96 @@ export class ContentAgent extends BaseAgent {
           return this.successResult(request, { text: guide }, { processingMs: Date.now() - start });
         }
 
+        case 'vision_extract': {
+          const keyFeatures = String(request.data['keyFeatures'] ?? request.instructions);
+          const featureJson = await this.ask(
+            `Extract structured property features from this description. Return JSON with fields: propertyType, bedBath, keyFeatures (array), conditionSignals (array), styleEra, standoutAttributes (array).\n\nDescription: ${keyFeatures}`,
+            ModelTier.BALANCED,
+          );
+          let parsed: object = {};
+          try {
+            const match = featureJson.match(/\{[\s\S]*\}/);
+            parsed = match ? JSON.parse(match[0]) : { raw: featureJson };
+          } catch {
+            parsed = { raw: featureJson };
+          }
+          return this.successResult(request, { featureJson: parsed, text: featureJson }, { processingMs: Date.now() - start });
+        }
+
+        case 'studio_generate': {
+          const preset = String(request.data['preset'] ?? 'new_listing');
+          const tone = String(request.data['tone'] ?? 'Standard');
+          const textPrompt = String(request.data['textPrompt'] ?? request.data['keyFeatures'] ?? request.instructions);
+          const images = (request.data['images'] as string[] | undefined) ?? [];
+          const platforms = (request.data['platforms'] as string[] | undefined) ?? ['MLS', 'Instagram', 'Facebook'];
+
+          let featureData = request.data['featureJson'] ? JSON.stringify(request.data['featureJson']) : textPrompt;
+
+          // Vision-first path: extract property features from images
+          if (images.length > 0 && !request.data['featureJson']) {
+            const visionResponse = await this.callLlm(
+              `User description: ${textPrompt}. Extract structured property features.`,
+              ModelTier.BALANCED,
+              {
+                messages: [{
+                  role: 'user',
+                  content: [
+                    ...images.map(img => ({
+                      type: 'image' as const,
+                      source: { type: 'base64' as const, mediaType: 'image/jpeg' as const, data: img },
+                    })),
+                    { type: 'text' as const, text: `User description: ${textPrompt}. Extract structured JSON: { propertyType, bedBath, keyFeatures[], conditionSignals[], styleEra, standoutAttributes[] }.` },
+                  ],
+                }],
+              },
+            );
+            featureData = visionResponse.text;
+          }
+
+          const platformInstructions = this.buildPlatformInstructions(platforms, preset);
+
+          const rawOutput = await this.ask(
+            `You are writing marketing copy for a real estate agent with a ${tone} tone.\n\nProperty features: ${featureData}\n\n${platformInstructions}\n\nReturn as JSON with only the requested platform fields.`,
+            ModelTier.BALANCED,
+          );
+
+          let drafts: Record<string, string> = {};
+          try {
+            const match = rawOutput.match(/\{[\s\S]*\}/);
+            if (match) drafts = JSON.parse(match[0]) as Record<string, string>;
+          } catch { drafts = { mlsDescription: rawOutput }; }
+
+          const complianceText = Object.values(drafts).join(' ');
+          const compliance = await this.checkContentCompliance(complianceText);
+
+          return this.successResult(request, {
+            text: JSON.stringify({ ...drafts, complianceFlags: compliance.flags, featureJson: featureData }),
+            ...drafts,
+            complianceFlags: compliance.flags,
+          }, {
+            approval: compliance.flags.length > 0 ? undefined : {
+              actionType: 'post_social',
+              preview: (drafts['instagramCaption'] ?? drafts['mlsDescription'] ?? '').slice(0, 200),
+              recipients: [],
+            },
+            processingMs: Date.now() - start,
+          });
+        }
+
+        case 'virtual_staging': {
+          const images = (request.data['images'] as string[] | undefined) ?? [];
+          const style = String(request.data['textPrompt'] ?? 'Modern');
+          if (!images[0]) {
+            return this.failureResult(request, new Error('No image provided for virtual staging'));
+          }
+          const stagedUrl = await this.stageRoom(images[0], style);
+          return this.successResult(
+            request,
+            { text: JSON.stringify({ stagedImageUrl: stagedUrl }), stagedImageUrl: stagedUrl },
+            { processingMs: Date.now() - start },
+          );
+        }
+
         case 'heartbeat': {
           return this.successResult(request, { status: 'ready' }, { processingMs: Date.now() - start });
         }
@@ -150,6 +240,61 @@ Format as JSON with keys: standard (MLS standard, 200 words), story (narrative, 
     } catch {
       return 'No local data available.';
     }
+  }
+
+  private buildPlatformInstructions(platforms: string[], preset: string): string {
+    const parts: string[] = [];
+    if (platforms.includes('MLS')) {
+      const wordCount = preset === 'just_sold' ? 150 : preset === 'price_reduction' ? 150 : 200;
+      const label = preset === 'just_sold' ? 'Just Sold MLS announcement' : preset === 'price_reduction' ? 'Price Reduction MLS announcement' : 'MLS description';
+      parts.push(`mlsDescription: ${label} (${wordCount} words, fair-housing compliant)`);
+    }
+    if (platforms.includes('Instagram')) {
+      parts.push('instagramCaption: Instagram caption (150 chars max, 5 relevant hashtags)');
+    }
+    if (platforms.includes('Facebook')) {
+      parts.push('facebookPost: Facebook post (300 chars, conversational tone)');
+    }
+    if (platforms.includes('Email')) {
+      parts.push('emailContent: Email body (subject line + 3 paragraphs, professional)');
+    }
+    if (platforms.includes('SMS')) {
+      parts.push('smsText: SMS message (160 chars max, concise, no links)');
+    }
+    return `Generate the following JSON fields:\n${parts.map(p => `- "${p}"`).join('\n')}`;
+  }
+
+  private async stageRoom(imageBase64: string, style: string): Promise<string> {
+    const apiKey = process.env['OPENAI_API_KEY'];
+    if (!apiKey) throw new Error('OPENAI_API_KEY not configured for virtual staging');
+
+    const prompt = `Virtually stage this empty room in a ${style} interior design style. Add appropriate furniture, lighting, artwork, and decor. Keep the room dimensions, windows, doors, and architectural features unchanged. Produce a photorealistic result that looks like a professional real estate listing photo.`;
+
+    const response = await fetch('https://api.openai.com/v1/images/edits', {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'dall-e-2',
+        image: imageBase64,
+        prompt,
+        n: 1,
+        size: '1024x1024',
+        response_format: 'url',
+      }),
+    });
+
+    if (!response.ok) {
+      const err = await response.text();
+      throw new Error(`Virtual staging API error: ${err.slice(0, 200)}`);
+    }
+
+    const result = await response.json() as { data?: [{ url?: string }] };
+    const url = result.data?.[0]?.url;
+    if (!url) throw new Error('No staged image URL returned');
+    return url;
   }
 
   private async checkContentCompliance(content: string): Promise<{ passed: boolean; flags: string[] }> {

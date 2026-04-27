@@ -11,6 +11,8 @@
  * Use createCancellationStore() to get the right one at startup.
  */
 
+import Redis from 'ioredis';
+
 export interface ICancellationStore {
   cancel(correlationId: string): Promise<void>;
   isCancelled(correlationId: string): Promise<boolean>;
@@ -52,7 +54,7 @@ export class InMemoryCancellationStore implements ICancellationStore {
  * replicas. Uses SET ... EX so entries expire automatically.
  */
 export class RedisCancellationStore implements ICancellationStore {
-  constructor(private readonly redis: import('ioredis').Redis) {}
+  constructor(private readonly redis: Redis) {}
 
   async cancel(correlationId: string): Promise<void> {
     await this.redis.set(`cancelled:${correlationId}`, '1', 'EX', 3600);
@@ -70,9 +72,8 @@ export class RedisCancellationStore implements ICancellationStore {
  * Returns a Redis-backed store if REDIS_URL is provided, otherwise in-memory.
  * ioredis is loaded lazily so the package is not required when Redis is absent.
  */
-export async function createCancellationStore(redisUrl?: string): Promise<ICancellationStore> {
+export function createCancellationStore(redisUrl?: string): ICancellationStore {
   if (redisUrl) {
-    const { default: Redis } = await import('ioredis');
     return new RedisCancellationStore(new Redis(redisUrl));
   }
   return new InMemoryCancellationStore();

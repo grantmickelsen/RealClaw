@@ -18,10 +18,11 @@ import { router } from 'expo-router';
 import { usePreferencesStore } from '../store/preferences';
 import { authedFetch } from '../lib/api';
 import { API_BASE_URL } from '../constants/api';
+import { PaywallModal } from '../components/paywall/PaywallModal';
 import * as Linking from 'expo-linking';
 
 const { width: SCREEN_W } = Dimensions.get('window');
-const TOTAL_STEPS = 7; // 0..6
+const TOTAL_STEPS = 8; // 0..7 (step 7 = paywall)
 
 // ─── Tone questions ───────────────────────────────────────────────────────────
 
@@ -85,6 +86,44 @@ const INTEGRATIONS: IntegrationTile[] = [
   { id: 'rentcast', label: 'RentCast MLS', icon: '🏡', serverSide: true },
   { id: 'docusign', label: 'DocuSign', icon: '✍️', comingSoon: true },
 ];
+
+// ─── Step 7: Onboarding Paywall ───────────────────────────────────────────────
+
+function OnboardingPaywallStep({ onStart, onSkip }: { onStart(): void; onSkip(): void }) {
+  const [paywallVisible, setPaywallVisible] = useState(false);
+  const { syncAfterPurchase } = require('../store/subscription').useSubscriptionStore.getState();
+
+  return (
+    <View style={styles.stepContainer}>
+      <Text style={{ fontSize: 48, marginBottom: 16 }}>⚡</Text>
+      <Text style={styles.welcomeTitle}>Unlock Professional</Text>
+      <Text style={styles.stepSub}>
+        Start your 14-day free trial and get full access to Contract X-Ray, Content Studio,
+        Route Optimization, Virtual Staging, and Open House Kiosk.
+      </Text>
+
+      <View style={{ gap: 12, marginTop: 32, width: '100%' }}>
+        <TouchableOpacity
+          style={[styles.primaryBtn, { backgroundColor: '#6366F1' }]}
+          onPress={() => setPaywallVisible(true)}
+          activeOpacity={0.85}
+        >
+          <Text style={styles.primaryBtnText}>✦ Start 14-Day Free Trial</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity onPress={onSkip} style={{ alignItems: 'center', paddingVertical: 12 }}>
+          <Text style={{ color: '#9CA3AF', fontSize: 14 }}>Skip — continue on Starter</Text>
+        </TouchableOpacity>
+      </View>
+
+      <PaywallModal
+        visible={paywallVisible}
+        onClose={() => setPaywallVisible(false)}
+        contextTitle="Start Your Free Trial"
+      />
+    </View>
+  );
+}
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
@@ -168,7 +207,7 @@ export default function OnboardingScreen() {
 
   return (
     <SafeAreaView style={styles.root} edges={['top', 'bottom']}>
-      {/* Progress bar */}
+      {/* Progress bar — visible for steps 1–5 only */}
       {step > 0 && step < 6 && (
         <View style={styles.progressTrack}>
           <Animated.View style={[styles.progressFill, { width: `${(step / 5) * 100}%` }]} />
@@ -208,6 +247,13 @@ export default function OnboardingScreen() {
             llmTier={llmTier}
             saving={saving}
             onFinish={finish}
+            onAdvance={next}
+          />
+        )}
+        {step === 7 && (
+          <OnboardingPaywallStep
+            onStart={() => router.replace('/(main)/chat')}
+            onSkip={() => router.replace('/(main)/chat')}
           />
         )}
       </Animated.View>
@@ -606,13 +652,14 @@ function QualityStep({
 // ─── Step 6: All Set ──────────────────────────────────────────────────────────
 
 function AllSetStep({
-  displayName, primaryZip, llmTier, saving, onFinish,
+  displayName, primaryZip, llmTier, saving, onFinish, onAdvance,
 }: {
   displayName: string;
   primaryZip: string;
   llmTier: 'fast' | 'balanced' | 'best';
   saving: boolean;
   onFinish: () => Promise<void>;
+  onAdvance: () => void;
 }) {
   const scaleAnim = useRef(new Animated.Value(0.6)).current;
   const hasFinished = useRef(false);
@@ -621,12 +668,12 @@ function AllSetStep({
     Animated.spring(scaleAnim, { toValue: 1, tension: 50, friction: 7, useNativeDriver: true }).start();
   }, [scaleAnim]);
 
-  // Trigger finish once and auto-navigate
+  // Save prefs then advance to the paywall step
   useEffect(() => {
     if (hasFinished.current) return;
     hasFinished.current = true;
     onFinish().then(() => {
-      setTimeout(() => router.replace('/(main)/chat'), 2000);
+      setTimeout(() => onAdvance(), 2000);
     });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 

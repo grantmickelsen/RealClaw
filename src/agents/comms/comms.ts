@@ -98,6 +98,35 @@ export class CommsAgent extends BaseAgent {
           });
         }
 
+        case 'sms_suggest': {
+          const profile = String(request.data['contactProfile'] ?? '');
+          const recentMessages = String(request.data['recentMessages'] ?? '');
+          const previous = String(request.data['previousSuggestions'] ?? '');
+          const previousHint = previous ? `\n\nDo NOT repeat these suggestions:\n${previous}` : '';
+          const raw = await this.ask(
+            `You are drafting SMS reply suggestions for a real estate agent. Be concise (under 120 chars each), professional, and conversational.
+
+Contact profile: ${profile || 'No profile available'}
+
+Recent conversation (newest last):
+${recentMessages || 'No messages yet'}
+
+Generate exactly 3 distinct reply options:
+1. A direct follow-up on their most recent message or question
+2. An action CTA (schedule showing, send listing, request call)
+3. A warm nurture reply (lower-pressure, relationship-building)${previousHint}
+
+Return ONLY a JSON array of 3 strings. Example: ["Reply 1", "Reply 2", "Reply 3"]`,
+            ModelTier.FAST,
+          );
+          let suggestions: string[] = [];
+          try {
+            const match = raw.match(/\[[\s\S]*\]/);
+            if (match) suggestions = JSON.parse(match[0]) as string[];
+          } catch { /* fall through — return empty */ }
+          return this.successResult(request, { suggestions }, { processingMs: Date.now() - start });
+        }
+
         case 'send_message':
         case 'sms_send': {
           const medium = String(request.data['medium'] ?? 'email');
