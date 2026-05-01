@@ -1,0 +1,5 @@
+{
+  "from": "leads@zillow.com",
+  "subject": "New Buyer Lead: John Smith interested in Austin properties",
+  "body": "Zillow Lead Notification\n\nYou have a new lead!\n\nContact: John Smith\nEmail: john.smith@gmail.com\nPhone: (512) 555-0142\n\nMessage: Hi, I'm John and I'm looking to buy a home in the Austin area. Budget is around $450k-$550k. Pre-approved and ready to move quickly. Interested in 3br/2ba in 78704 or 78745. When can we schedule some showings?\n\nProperty Interest: 1234 South Lamar Blvd, Austin TX 78704\nRequested: Schedule a showing\n\nReply to this lead at zillow.com/agent-hub"
+}

@@ -11,6 +11,7 @@ import Animated, {
 import * as Haptics from 'expo-haptics';
 import { authedFetch } from '../../lib/api';
 import { useBriefingStore, type BriefingItem } from '../../store/briefing';
+import { useContactsStore } from '../../store/contacts';
 
 type BriefingType = BriefingItem['type'];
 
@@ -63,6 +64,10 @@ export function ActionCard({ item }: Props) {
   const [approving, setApproving] = useState(false);
   const hintFired = useRef(false);
   const dismissItem = useBriefingStore(s => s.dismissItem);
+  const addPendingApproval = useBriefingStore(s => s.addPendingApproval);
+  const contactName = useContactsStore(
+    s => item.contactId ? (s.contacts.find(c => c.id === item.contactId)?.name ?? null) : null,
+  );
   const translateX = useSharedValue(0);
   const accent = TYPE_COLORS[item.type];
 
@@ -79,9 +84,13 @@ export function ActionCard({ item }: Props) {
         body: JSON.stringify({ draftContent: draft }),
       });
       if (res.ok) {
+        const data = await res.json() as { ok: boolean; approvalId?: string };
         setDetailOpen(false);
         dismissItem(item.id);
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        if (data.approvalId) {
+          addPendingApproval(data.approvalId);
+        }
       } else {
         Alert.alert('Error', 'Could not queue for approval. Please try again.');
       }
@@ -144,6 +153,7 @@ export function ActionCard({ item }: Props) {
               )}
             </View>
 
+            {contactName && <Text style={styles.contactName}>{contactName}</Text>}
             <Text style={styles.summary} numberOfLines={3}>{item.summaryText}</Text>
 
             {item.draftContent ? (
@@ -278,6 +288,7 @@ const styles = StyleSheet.create({
     marginLeft: 4,
   },
   urgencyText: { color: '#fff', fontSize: 9, fontWeight: '800', letterSpacing: 0.8 },
+  contactName: { fontSize: 13, fontWeight: '700', color: '#374151' },
   summary: { fontSize: 16, color: '#1a1a1a', lineHeight: 24 },
   draftPreview: {
     backgroundColor: '#f7f7fa',

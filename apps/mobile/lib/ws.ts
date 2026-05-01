@@ -1,3 +1,4 @@
+import { router } from 'expo-router';
 import { useAuthStore } from '../store/auth';
 import { useWsStore } from '../store/ws';
 import { useChatStore } from '../store/chat';
@@ -159,7 +160,9 @@ function handleMessage(event: WsEvent): void {
       }
 
       // Studio content generation / virtual staging result
+      let handledByStudio = false;
       if (useStudioStore.getState().pendingCorrelationId === event.correlationId) {
+        handledByStudio = true;
         try {
           const parsed = JSON.parse(finalText) as {
             stagedImageUrl?: string;
@@ -180,9 +183,18 @@ function handleMessage(event: WsEvent): void {
             });
           }
         } catch { /* not a studio result */ }
+        // Store approvalId so studio can offer "Review & Post" button rather than auto-navigating
+        if (approvalId) {
+          useStudioStore.getState().setPendingApprovalId(approvalId);
+        }
       }
 
       useChatStore.getState().updateMessage(event.correlationId, { text: finalText, status: 'done', hasApproval, approvalId });
+
+      // Auto-navigate for approvals — skip briefing (defers to briefing screen) and studio (shows inline CTA)
+      if (hasApproval && approvalId && event.payload.source !== 'briefing' && !handledByStudio) {
+        setTimeout(() => router.push(`/approval/${approvalId}`), 350);
+      }
 
       // Persist the assistant message so it survives app restarts
       const assistantMsg = useChatStore.getState().messages.find(m => m.correlationId === event.correlationId && m.role === 'assistant');

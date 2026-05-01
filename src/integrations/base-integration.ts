@@ -136,9 +136,10 @@ export abstract class BaseIntegration {
   }
 
   protected async buildAuthHeaders(): Promise<Record<string, string>> {
+    const tid = this.tenantId !== 'default' ? this.tenantId : undefined;
     switch (this.config.authMethod) {
       case 'oauth2': {
-        const token = await this.vault.retrieve(this.id, 'access_token');
+        const token = await this.vault.retrieve(this.id, 'access_token', tid);
         if (!token) throw new IntegrationError(this.id, 'No access token stored', 401, false);
         return { Authorization: `Bearer ${token}` };
       }

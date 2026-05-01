@@ -46,9 +46,9 @@ export class CredentialVault {
     );
   }
 
-  async store(integrationId: IntegrationId, key: string, value: string): Promise<void> {
+  async store(integrationId: IntegrationId, key: string, value: string, tenantId?: string): Promise<void> {
     const encrypted = this.encrypt(value);
-    const filePath = this.entryPath(integrationId, key);
+    const filePath = this.entryPath(integrationId, key, tenantId);
     await fs.mkdir(path.dirname(filePath), { recursive: true });
     await fs.writeFile(filePath, JSON.stringify(encrypted), 'utf-8');
 
@@ -66,8 +66,8 @@ export class CredentialVault {
     });
   }
 
-  async retrieve(integrationId: IntegrationId, key: string): Promise<string | null> {
-    const filePath = this.entryPath(integrationId, key);
+  async retrieve(integrationId: IntegrationId, key: string, tenantId?: string): Promise<string | null> {
+    const filePath = this.entryPath(integrationId, key, tenantId);
     try {
       const raw = await fs.readFile(filePath, 'utf-8');
       const entry: EncryptedEntry = JSON.parse(raw);
@@ -75,6 +75,15 @@ export class CredentialVault {
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') return null;
       throw err;
+    }
+  }
+
+  async delete(integrationId: IntegrationId, key: string, tenantId?: string): Promise<void> {
+    const filePath = this.entryPath(integrationId, key, tenantId);
+    try {
+      await fs.unlink(filePath);
+    } catch (err) {
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
     }
   }
 
@@ -136,8 +145,14 @@ export class CredentialVault {
     return decipher.update(ciphertext).toString('utf-8') + decipher.final('utf-8');
   }
 
-  private entryPath(integrationId: IntegrationId, key: string): string {
+  private entryPath(integrationId: IntegrationId, key: string, tenantId?: string): string {
     const safeKey = key.replace(/[^a-zA-Z0-9_-]/g, '_');
+    // When tenantId is provided (and not the global default), namespace under it
+    // so each tenant's OAuth tokens are stored separately.
+    if (tenantId && tenantId !== 'default') {
+      const safeTenant = tenantId.replace(/[^a-zA-Z0-9_-]/g, '_');
+      return path.join(this.vaultPath, safeTenant, integrationId, `${safeKey}.enc`);
+    }
     return path.join(this.vaultPath, integrationId, `${safeKey}.enc`);
   }
 

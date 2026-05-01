@@ -15,6 +15,11 @@
     }
   },
   "fallbackChain": ["anthropic", "openrouter"],
+  "imageGeneration": {
+    "stagingModel": "gpt-image-1",
+    "stagingFallback": "dall-e-2",
+    "textToImageModel": "gpt-image-1"
+  },
   "agentOverrides": {
     "research": {
       "fast": {
@@ -125,7 +130,7 @@
     },
     "ollama": {
       "id": "ollama",
-      "enabled": false,
+      "enabled": true,
       "apiKeyEnvVar": "",
       "baseUrl": "http://127.0.0.1:11434",
       "rateLimitPerMinute": 999,

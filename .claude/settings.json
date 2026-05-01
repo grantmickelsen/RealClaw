@@ -84,7 +84,19 @@
       "Bash(pkill -f ngrok)",
       "Bash(docker exec *)",
       "Bash(grep -v \"^$\")",
-      "Bash(node node_modules/.bin/vitest run)"
+      "Bash(node node_modules/.bin/vitest run)",
+      "Bash(xargs cat *)",
+      "Bash(node_modules/.bin/jest --passWithNoTests --ci)",
+      "Bash(node_modules/.bin/jest --passWithNoTests --ci --rootDir apps/mobile)",
+      "Bash(node_modules/.bin/jest --passWithNoTests --ci --rootDir apps/mobile __tests__/store/chat)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebSearch",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:www.mintlify.com)",
+      "Bash(curl -sv \"http://localhost:18789/oauth/connect/gmail\")",
+      "Bash(curl -s --max-time 5 -H \"Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJzdWJzY3JpcHRpb25UaWVyIjoicHJvZmVzc2lvbmFsIiwic3Vic2NyaXB0aW9uU3RhdHVzIjoiYWN0aXZlIiwiaWF0IjoxNzc3NTExMzc4LCJleHAiOjE3Nzc1MTQ5NzgsImlzcyI6InJlYWxjbGF3Iiwic3ViIjoidGVzdC11c2VyIn0.7ZH5H3JB8u_RjOgSG3UT1gH5BvK2zQA85hB_RzYeIsQ\" \"http://localhost:18789/v1/integrations/gmail/status\")",
+      "Bash(curl -s --max-time 5 \"http://localhost:18789/oauth/connect/gmail?token=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ0ZW5hbnRJZCI6ImRlZmF1bHQiLCJzdWJzY3JpcHRpb25UaWVyIjoicHJvZmVzc2lvbmFsIiwic3Vic2NyaXB0aW9uU3RhdHVzIjoiYWN0aXZlIiwiaWF0IjoxNzc3NTExMzc4LCJleHAiOjE3Nzc1MTQ5NzgsImlzcyI6InJlYWxjbGF3Iiwic3ViIjoidGVzdC11c2VyIn0.7ZH5H3JB8u_RjOgSG3UT1gH5BvK2zQA85hB_RzYeIsQ\" -w \"\\\\nHTTP_STATUS:%{http_code}\")"
     ],
     "additionalDirectories": [
       "/home/grant/.claude/plans",

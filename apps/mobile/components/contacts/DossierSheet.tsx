@@ -44,6 +44,16 @@ export function DossierSheet({ bottomSheetRef }: Props) {
 
   async function handleAction(action: SuggestedAction) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+
+    if ((action.actionType === 'send_sms' || action.actionType === 'sms_send') && dossierContactId) {
+      bottomSheetRef.current?.close();
+      router.push({
+        pathname: '/(main)/sms/[contactId]' as const,
+        params: { contactId: dossierContactId, draft: action.preview },
+      });
+      return;
+    }
+
     try {
       const res = await authedFetch('/v1/messages', {
         method: 'POST',
@@ -55,7 +65,7 @@ export function DossierSheet({ bottomSheetRef }: Props) {
       });
       if (res.ok) {
         Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-        Alert.alert('Queued', `"${action.label}" sent to approval carousel.`);
+        Alert.alert('Queued', `"${action.label}" sent to approval queue.`);
       } else {
         Alert.alert('Error', 'Could not queue action. Please try again.');
       }

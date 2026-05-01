@@ -41,6 +41,10 @@ export class Coordinator {
   private readonly agentId = AgentId.COORDINATOR;
   private clientConfig: ClientConfig | null = null;
   private soulPrompt = '';
+  private autoApprovalSettings: Record<string, string> = {};
+
+  // Action types that always require approval regardless of user settings
+  private static readonly ALWAYS_REQUIRE = new Set(['financial_action', 'send_document_contract']);
 
   private readonly clawRouter: CoordinatorRouter;
   private readonly dispatcher: Dispatcher;
@@ -78,40 +82,46 @@ export class Coordinator {
         const item = request.batch[decision.index];
         if (!item) continue;
 
-        const taskRequest: TaskRequest = {
-          messageId: uuidv4(),
-          timestamp: new Date().toISOString(),
-          correlationId: request.correlationId,
-          type: 'TASK_REQUEST',
-          fromAgent: this.agentId,
-          toAgent: item.originatingAgent,
-          priority: Priority.P1_URGENT,
-          taskType: 'send_message',
-          instructions: item.fullContent ?? item.preview,
-          context: {
-            clientId: this.tenantId,
-            contactId: item.recipients[0],
-          },
-          data: {
-            medium: item.medium,
-            recipients: item.recipients,
-            approved: true,
-            approvalId: request.approvalId,
-            taskResultId: item.taskResultId,
-          },
-          constraints: {
-            maxTokens: 4096,
-            modelOverride: null,
-            timeoutMs: 30_000,
-            requiresApproval: false,
-            approvalCategory: null,
-          },
-        };
-
-        await this.dispatcher.dispatchSingle(item.originatingAgent, taskRequest).catch(err => {
-          log.error('[Coordinator] Failed to execute approved action', { error: (err as Error).message });
-        });
+        await this.dispatchApprovedItem(item, request.correlationId);
       }
+    });
+  }
+
+  updateAutoApprovalSettings(settings: Record<string, string>): void {
+    this.autoApprovalSettings = settings;
+  }
+
+  private async dispatchApprovedItem(item: import('../types/messages.js').ApprovalItem, correlationId: string): Promise<void> {
+    const taskRequest: TaskRequest = {
+      messageId: uuidv4(),
+      timestamp: new Date().toISOString(),
+      correlationId,
+      type: 'TASK_REQUEST',
+      fromAgent: this.agentId,
+      toAgent: item.originatingAgent,
+      priority: Priority.P1_URGENT,
+      taskType: 'send_message',
+      instructions: item.fullContent ?? item.preview,
+      context: {
+        clientId: this.tenantId,
+        contactId: item.recipients[0],
+      },
+      data: {
+        medium: item.medium,
+        recipients: item.recipients,
+        approved: true,
+        taskResultId: item.taskResultId,
+      },
+      constraints: {
+        maxTokens: 4096,
+        modelOverride: null,
+        timeoutMs: 30_000,
+        requiresApproval: false,
+        approvalCategory: null,
+      },
+    };
+    await this.dispatcher.dispatchSingle(item.originatingAgent, taskRequest).catch(err => {
+      log.error('[Coordinator] Failed to dispatch approved action', { error: (err as Error).message });
     });
   }
 
@@ -196,8 +206,14 @@ export class Coordinator {
       content: { ...message.content, text: sanitized.sanitizedText },
     };
 
+    // Allow API endpoints to short-circuit LLM classification with an explicit hint
+    const taskTypeHint = message.structuredData?.['taskTypeHint'] as string | undefined;
+    const targetAgentHint = message.structuredData?.['targetAgent'] as AgentId | undefined;
+
     // Classify intent and route
-    const decision = await this.clawRouter.classifyIntent(sanitizedMessage);
+    const decision = (taskTypeHint && targetAgentHint)
+      ? { intent: taskTypeHint, confidence: 1.0, dispatchMode: 'single' as const, targets: [targetAgentHint] }
+      : await this.clawRouter.classifyIntent(sanitizedMessage);
     log.info(`[Coordinator] Intent: ${decision.intent} (${(decision.confidence * 100).toFixed(0)}%) → ${decision.dispatchMode} → [${decision.targets.join(', ')}]`);
 
     if (decision.intent === 'clarify') {
@@ -286,31 +302,60 @@ export class Coordinator {
     const successCount = results.filter(r => r.status !== 'failed').length;
     log.info(`[Coordinator] Dispatch complete: ${successCount}/${results.length} succeeded in ${Date.now() - dispatchStart}ms`);
 
-    // Handle approvals
-    const approvalItems = this.synthesizer.extractPendingApprovals(results);
-    if (approvalItems.length > 0) {
-      let approvalTokenSeq = 0;
-      const approvalOnToken = (token: string) => {
-        this.wsPusher?.push(this.tenantId, {
-          type: 'TOKEN_STREAM',
-          correlationId: message.correlationId,
-          tenantId: this.tenantId,
-          timestamp: new Date().toISOString(),
-          payload: { token, agentId: this.agentId, sequenceIndex: approvalTokenSeq++ },
-        });
-      };
-      const approvalRequest = await this.approvalManager.createApprovalRequest(approvalItems);
-      const text = await this.synthesizer.synthesize(results, sanitizedMessage, approvalOnToken, signal);
-      const outbound: OutboundMessage = {
-        platform: message.platform,
-        channelId: message.channelId,
-        text,
-        correlationId: message.correlationId,
-        approvalRequest,
-      };
-      const payload = formatOutbound(message.platform, outbound);
-      await this.sendMessage?.(message.platform, message.channelId, payload, message.correlationId);
+    // Studio tasks return structured JSON — skip synthesis so the WS handler can parse it
+    if (decision.intent === 'studio_generate' || decision.intent === 'virtual_staging') {
+      const rawText = (results[0]?.result['text'] as string | undefined) ?? '{}';
+      await this.reply(message, rawText);
       return;
+    }
+
+    // Handle approvals — split into auto-dispatch and review-required items
+    const allApprovalItems = this.synthesizer.extractPendingApprovals(results);
+    if (allApprovalItems.length > 0) {
+      const autoItems: typeof allApprovalItems = [];
+      const reviewItems: typeof allApprovalItems = [];
+
+      for (const item of allApprovalItems) {
+        const setting = this.autoApprovalSettings[item.actionType] ?? 'require';
+        if (setting === 'auto' && !Coordinator.ALWAYS_REQUIRE.has(item.actionType)) {
+          autoItems.push(item);
+        } else {
+          reviewItems.push(item);
+        }
+      }
+
+      // Dispatch auto-approved items immediately — no carousel
+      if (autoItems.length > 0) {
+        log.info(`[Coordinator] Auto-approving ${autoItems.length} item(s): ${autoItems.map(i => i.actionType).join(', ')}`);
+        await Promise.all(autoItems.map(item => this.dispatchApprovedItem(item, message.correlationId)));
+      }
+
+      if (reviewItems.length > 0) {
+        let approvalTokenSeq = 0;
+        const approvalOnToken = (token: string) => {
+          this.wsPusher?.push(this.tenantId, {
+            type: 'TOKEN_STREAM',
+            correlationId: message.correlationId,
+            tenantId: this.tenantId,
+            timestamp: new Date().toISOString(),
+            payload: { token, agentId: this.agentId, sequenceIndex: approvalTokenSeq++ },
+          });
+        };
+        const approvalRequest = await this.approvalManager.createApprovalRequest(reviewItems);
+        const text = await this.synthesizer.synthesize(results, sanitizedMessage, approvalOnToken, signal);
+        const outbound: OutboundMessage = {
+          platform: message.platform,
+          channelId: message.channelId,
+          text,
+          correlationId: message.correlationId,
+          approvalRequest,
+        };
+        const payload = formatOutbound(message.platform, outbound);
+        await this.sendMessage?.(message.platform, message.channelId, payload, message.correlationId);
+        return;
+      }
+
+      // All items were auto-dispatched — fall through to normal synthesize + reply
     }
 
     // Build onToken callback for synthesis streaming

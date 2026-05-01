@@ -112,7 +112,7 @@ export default function CommsScreen() {
     try {
       const [cRes, sRes] = await Promise.all([
         authedFetch('/v1/contacts'),
-        authedFetch('/v1/sms/conversations'),
+        authedFetch('/v1/sms'),
       ]);
       if (cRes.ok) {
         const d = await cRes.json() as { contacts: ContactCard[] };
@@ -120,7 +120,7 @@ export default function CommsScreen() {
       }
       if (sRes.ok) {
         const d = await sRes.json() as { conversations: SmsConversation[] };
-        setConversations(d.conversations);
+        setConversations(d.conversations ?? []);
       }
     } catch { /* silent */ } finally {
       setLoading(false);

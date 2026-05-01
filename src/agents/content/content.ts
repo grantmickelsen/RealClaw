@@ -109,6 +109,27 @@ export class ContentAgent extends BaseAgent {
           const textPrompt = String(request.data['textPrompt'] ?? request.data['keyFeatures'] ?? request.instructions);
           const images = (request.data['images'] as string[] | undefined) ?? [];
           const platforms = (request.data['platforms'] as string[] | undefined) ?? ['MLS', 'Instagram', 'Facebook'];
+          const contactId = String(request.data['contactId'] ?? '');
+
+          // Fetch contact profile for personalized copy
+          let contactContext = '';
+          if (contactId) {
+            try {
+              const contactQuery: AgentQuery = {
+                messageId: uuidv4(),
+                timestamp: new Date().toISOString(),
+                correlationId: uuidv4(),
+                type: 'AGENT_QUERY',
+                fromAgent: this.id,
+                toAgent: AgentId.RELATIONSHIP,
+                queryType: 'contact_memory',
+                parameters: { contactId },
+                urgency: 'blocking',
+              };
+              const contactResp = await this.queryAgent(AgentId.RELATIONSHIP, contactQuery);
+              if (contactResp.found) contactContext = String(contactResp.data['profile'] ?? '');
+            } catch { /* optional — proceed without contact context */ }
+          }
 
           let featureData = request.data['featureJson'] ? JSON.stringify(request.data['featureJson']) : textPrompt;
 
@@ -135,8 +156,12 @@ export class ContentAgent extends BaseAgent {
 
           const platformInstructions = this.buildPlatformInstructions(platforms, preset);
 
+          const contactSection = contactContext
+            ? `\n\nPersonalized for buyer:\n${contactContext}\nHighlight features that match their stated criteria and budget where relevant.`
+            : '';
+
           const rawOutput = await this.ask(
-            `You are writing marketing copy for a real estate agent with a ${tone} tone.\n\nProperty features: ${featureData}\n\n${platformInstructions}\n\nReturn as JSON with only the requested platform fields.`,
+            `You are writing marketing copy for a real estate agent with a ${tone} tone.\n\nProperty features: ${featureData}${contactSection}\n\n${platformInstructions}\n\nReturn as JSON with only the requested platform fields.`,
             ModelTier.BALANCED,
           );
 
@@ -268,6 +293,38 @@ Format as JSON with keys: standard (MLS standard, 200 words), story (narrative, 
     const apiKey = process.env['OPENAI_API_KEY'];
     if (!apiKey) throw new Error('OPENAI_API_KEY not configured for virtual staging');
 
+    const prompt = `Virtually stage this empty room in a ${style} interior design style. Add appropriate furniture, lighting, artwork, and decor. Keep the room dimensions, windows, doors, and architectural features unchanged. Produce a photorealistic result that looks like a professional real estate listing photo.`;
+
+    try {
+      // Attempt gpt-image-1 via multipart form (higher quality)
+      const form = new FormData();
+      form.append('model', 'gpt-image-1');
+      form.append('prompt', prompt);
+      form.append('n', '1');
+      form.append('size', '1024x1024');
+      const imageBuffer = Buffer.from(imageBase64, 'base64');
+      form.append('image', new Blob([imageBuffer], { type: 'image/jpeg' }), 'room.jpg');
+
+      const response = await fetch('https://api.openai.com/v1/images/edits', {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${apiKey}` },
+        body: form,
+      });
+
+      if (!response.ok) throw new Error(await response.text());
+
+      const result = await response.json() as { data?: [{ url?: string; b64_json?: string }] };
+      const item = result.data?.[0];
+      if (item?.url) return item.url;
+      if (item?.b64_json) return `data:image/png;base64,${item.b64_json}`;
+      throw new Error('No image in gpt-image-1 response');
+    } catch {
+      // Fallback to dall-e-2
+      return this.stageRoomDallE2(imageBase64, style, apiKey);
+    }
+  }
+
+  private async stageRoomDallE2(imageBase64: string, style: string, apiKey: string): Promise<string> {
     const prompt = `Virtually stage this empty room in a ${style} interior design style. Add appropriate furniture, lighting, artwork, and decor. Keep the room dimensions, windows, doors, and architectural features unchanged. Produce a photorealistic result that looks like a professional real estate listing photo.`;
 
     const response = await fetch('https://api.openai.com/v1/images/edits', {

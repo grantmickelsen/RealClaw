@@ -23,8 +23,11 @@ import { createRateLimiter } from './middleware/rate-limiter.js';
 import { AuditLogger } from './middleware/audit-logger.js';
 import { HeartbeatScheduler } from './agents/ops/heartbeat.js';
 import { BullMqHeartbeatScheduler, parseRedisUrl } from './agents/ops/bullmq-heartbeat.js';
-import { registerBriefingJob } from './agents/ops/briefing-job.js';
+import { registerBriefingJob, generateBriefingForTenant } from './agents/ops/briefing-job.js';
 import { registerDealDeadlineMonitorJob } from './agents/ops/deal-deadline-monitor-job.js';
+import { registerGmailIngestWorker } from './agents/ops/gmail-ingest-job.js';
+import { registerGmailWatchJob } from './agents/ops/gmail-watch-job.js';
+import { createToneAnalysisQueue, getToneAnalysisQueue, registerToneAnalysisWorker } from './agents/ops/tone-analysis-job.js';
 import { createEventBus } from './agents/ops/redis-event-bus.js';
 import { createDistributedLock } from './memory/distributed-lock.js';
 import { createPushNotificationService } from './gateway/push-notification.js';
@@ -45,6 +48,7 @@ import { verifyAppleIdentityToken } from './auth/apple-auth.js';
 import { verifyGoogleIdentityToken } from './auth/google-auth.js';
 import { issueTokenPair, rotateRefreshToken, revokeAllTokens, fetchSubscriptionClaims } from './auth/token-service.js';
 import { handleRevenueCatWebhook } from './webhooks/revenuecat.js';
+import { handleGmailWebhook, createGmailIngestQueue, getGmailIngestQueue } from './webhooks/gmail-webhook.js';
 import { WsSessionManager } from './gateway/ws-session-manager.js';
 import { createCancellationStore } from './gateway/cancellation-store.js';
 import { TaskCancelledError } from './utils/errors.js';
@@ -64,19 +68,21 @@ import { ShowingsAgent } from './agents/showings/showings-agent.js';
 
 import { AGENT_CONFIGS, AgentId } from './types/agents.js';
 import type { BaseAgent } from './agents/base-agent.js';
-import type { InboundMessage, ApprovalResponse } from './types/messages.js';
+import type { InboundMessage, ApprovalResponse, ApprovalItem } from './types/messages.js';
 import { normalizeInbound } from './utils/normalize.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const CONFIG_DIR = path.resolve(__dirname, '..', 'config');
-const MODELS_CONFIG = path.join(CONFIG_DIR, 'models.json');
+const MODELS_CONFIG = process.env.CLAW_MODELS_CONFIG
+  ? path.resolve(process.env.CLAW_MODELS_CONFIG)
+  : path.join(CONFIG_DIR, 'models.json');
 const HEARTBEAT_CONFIG = path.join(CONFIG_DIR, 'heartbeat.json');
 const INTEGRATIONS_CONFIG = path.join(CONFIG_DIR, 'integrations.json');
 const PORT = parseInt(process.env.OPENCLAW_GATEWAY_PORT ?? '18789', 10);
 const OAUTH_REDIRECT_BASE = process.env.CLAW_OAUTH_REDIRECT_BASE ?? `http://localhost:${PORT}`;
 
-// CSRF state store — maps state token → { integrationId, expiresAt }
-const oauthStateStore = new Map<string, { integrationId: string; expiresAt: number }>();
+// CSRF state store — maps state token → { integrationId, tenantId, expiresAt }
+const oauthStateStore = new Map<string, { integrationId: string; tenantId: string; expiresAt: number }>();
 
 // ─── Logging ─── (log imported from ./utils/logger.js above)
 
@@ -166,6 +172,17 @@ class TenantRegistry {
 
     for (const agent of agentRegistry.values()) {
       coordinator.registerDispatcher(agent);
+    }
+
+    // Seed auto-approval settings from DB so coordinator uses correct policy from first request
+    if (this.dbAvailable) {
+      try {
+        const settingsRow = await query<{ auto_approval_settings: Record<string, string> }>(
+          'SELECT auto_approval_settings FROM tenants WHERE tenant_id = $1',
+          [tenantId],
+        );
+        coordinator.updateAutoApprovalSettings(settingsRow.rows[0]?.auto_approval_settings ?? {});
+      } catch { /* non-critical — defaults to require-all */ }
     }
 
     coordinator.onSendMessage(async (platform, channelId, payload, correlationId) => {
@@ -346,6 +363,29 @@ function checkAuthRateLimit(req: http.IncomingMessage): boolean {
   return true;
 }
 
+const FORMALITY_LABELS = ['Casual', 'Warm', 'Balanced', 'Professional', 'Formal'];
+
+function buildTonePrefsMarkdown(prefs: Record<string, unknown>): string {
+  const lines: string[] = ['## Stated Preferences\n'];
+  if (typeof prefs['emailSalutation'] === 'string' && prefs['emailSalutation'])
+    lines.push(`- Email greeting: "${prefs['emailSalutation']}"`);
+  if (typeof prefs['textSalutation'] === 'string' && prefs['textSalutation'])
+    lines.push(`- Text greeting: "${prefs['textSalutation']}"`);
+  if (typeof prefs['formalityLevel'] === 'number')
+    lines.push(`- Formality: ${FORMALITY_LABELS[prefs['formalityLevel'] as number] ?? 'Balanced'}`);
+  if (typeof prefs['emojisInComms'] === 'boolean')
+    lines.push(`- Emojis in client comms: ${prefs['emojisInComms'] ? 'Yes' : 'No'}`);
+  if (typeof prefs['emojisInSocial'] === 'boolean')
+    lines.push(`- Emojis in social posts: ${prefs['emojisInSocial'] ? 'Yes' : 'No'}`);
+  if (typeof prefs['preferBullets'] === 'boolean')
+    lines.push(`- Prefer bullet points: ${prefs['preferBullets'] ? 'Yes' : 'No'}`);
+
+  const sample = typeof prefs['writingSample'] === 'string' ? prefs['writingSample'].trim() : '';
+  if (sample) lines.push(`\n## Writing Sample\n\n${sample}`);
+
+  return lines.join('\n');
+}
+
 async function bootstrap(): Promise<void> {
   log.info('Starting Claw gateway...');
 
@@ -431,6 +471,50 @@ async function bootstrap(): Promise<void> {
       await dw.close();
       await dq.close();
     };
+  }
+
+  // ─── Gmail ingest queue + worker (BullMQ, triggered by Pub/Sub webhook) ───
+  if (bullMqConnection) {
+    createGmailIngestQueue(bullMqConnection);
+  }
+  let gmailIngestCleanup: (() => Promise<void>) | undefined;
+  if (bullMqConnection && dbAvailable) {
+    const dispatchEmailIngest = async (tenantId: string, emailRow: Record<string, unknown>) => {
+      const coordinator = await tenantRegistry.getOrCreate(tenantId);
+      const correlationId = uuidv4();
+      const msg = normalizeInbound('mobile', {
+        text: '',
+        channelId: 'gmail',
+        userId: tenantId,
+        username: 'gmail-ingest',
+        correlationId,
+        structuredData: { taskType: 'email_ingest', emailRow },
+      });
+      await coordinator.handleInbound(msg);
+    };
+    const gmailWorker = registerGmailIngestWorker(bullMqConnection, vault, dispatchEmailIngest);
+    gmailIngestCleanup = async () => { await gmailWorker.close(); };
+  }
+
+  // ─── Gmail watch renewal job (BullMQ, daily at 9 AM UTC) ───
+  let gmailWatchCleanup: (() => Promise<void>) | undefined;
+  if (bullMqConnection && dbAvailable) {
+    const { queue: gwq, worker: gww } = registerGmailWatchJob(bullMqConnection, vault);
+    gmailWatchCleanup = async () => {
+      await gww.close();
+      await gwq.close();
+    };
+  }
+
+  // ─── Tone analysis worker (BullMQ, triggered on-demand by user) ─────────
+  if (bullMqConnection) {
+    createToneAnalysisQueue(bullMqConnection);
+  }
+  let toneAnalysisCleanup: (() => Promise<void>) | undefined;
+  if (bullMqConnection && dbAvailable) {
+    const memPath = process.env.CLAW_MEMORY_PATH ?? path.resolve('./memory');
+    const toneWorker = registerToneAnalysisWorker(bullMqConnection, vault, llmRouter, memPath);
+    toneAnalysisCleanup = async () => { await toneWorker.close(); };
   }
 
   // ─── Gateway HTTP Server ───
@@ -780,8 +864,10 @@ async function bootstrap(): Promise<void> {
         llm_tier: string;
         tone_prefs: Record<string, unknown>;
         onboarding_done: boolean;
+        tone_analyzed_at: string | null;
+        auto_approval_settings: Record<string, string>;
       }>(
-        'SELECT primary_zip, display_name, brokerage, phone, llm_tier, tone_prefs, onboarding_done FROM tenants WHERE tenant_id = $1',
+        'SELECT primary_zip, display_name, brokerage, phone, llm_tier, tone_prefs, onboarding_done, tone_analyzed_at, auto_approval_settings FROM tenants WHERE tenant_id = $1',
         [auth.tenantId],
       );
       const t = row.rows[0];
@@ -793,6 +879,8 @@ async function bootstrap(): Promise<void> {
         llmTier: t?.llm_tier ?? 'balanced',
         tonePrefs: t?.tone_prefs ?? {},
         onboardingDone: t?.onboarding_done ?? false,
+        toneAnalyzedAt: t?.tone_analyzed_at ?? null,
+        autoApprovalSettings: t?.auto_approval_settings ?? {},
       });
       return;
     }
@@ -826,6 +914,7 @@ async function bootstrap(): Promise<void> {
         llmTier?: string;
         tonePrefs?: Record<string, unknown>;
         onboardingDone?: boolean;
+        autoApprovalSettings?: Record<string, string>;
       };
       if (updates.primaryZip !== undefined && !/^\d{5}$/.test(updates.primaryZip)) {
         sendJson(res, 400, { ok: false, error: 'primaryZip must be a 5-digit ZIP code' });
@@ -846,6 +935,7 @@ async function bootstrap(): Promise<void> {
         llmTier: 'llm_tier',
         tonePrefs: 'tone_prefs',
         onboardingDone: 'onboarding_done',
+        autoApprovalSettings: 'auto_approval_settings',
       };
       for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
         if (jsKey in updates) {
@@ -862,6 +952,22 @@ async function bootstrap(): Promise<void> {
         `UPDATE tenants SET ${setClauses.join(', ')} WHERE tenant_id = $${values.length}`,
         values,
       );
+      // Write tone-prefs.md to memory so CommsAgent can merge it into its tone model
+      if (updates.tonePrefs) {
+        try {
+          const memPath = process.env.CLAW_MEMORY_PATH ?? path.resolve('./memory');
+          const tonePrefsPath = path.join(memPath, auth.tenantId, 'client-profile', 'tone-prefs.md');
+          await fs.mkdir(path.dirname(tonePrefsPath), { recursive: true });
+          await fs.writeFile(tonePrefsPath, buildTonePrefsMarkdown(updates.tonePrefs), 'utf-8');
+        } catch { /* non-critical */ }
+      }
+      // Push auto-approval settings to coordinator so behavior changes immediately (no restart needed)
+      if (updates.autoApprovalSettings) {
+        try {
+          const coordinator = await tenantRegistry.getOrCreate(auth.tenantId);
+          coordinator.updateAutoApprovalSettings(updates.autoApprovalSettings);
+        } catch { /* non-critical */ }
+      }
       sendJson(res, 200, { ok: true });
       return;
     }
@@ -1131,6 +1237,26 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    // ─── POST /v1/briefing/regenerate (JWT required) ──────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/briefing/regenerate') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+      sendJson(res, 202, { ok: true });
+      setImmediate(async () => {
+        try {
+          await generateBriefingForTenant(auth.tenantId, llmRouter);
+        } catch (err) {
+          log.error(`[Briefing:regenerate] Error for ${auth.tenantId}`, { error: (err as Error).message });
+        }
+      });
+      return;
+    }
+
     // ─── POST /v1/briefing/:id/approve (JWT required) ─────────────────────────
     if (req.method === 'POST' && url.pathname.startsWith('/v1/briefing/') && url.pathname.endsWith('/approve')) {
       let auth: AuthContext;
@@ -1149,9 +1275,10 @@ async function bootstrap(): Promise<void> {
       );
       const briefingRow = await query<{
         summary_text: string; draft_content: string | null;
-        suggested_action: string | null;
+        suggested_action: string | null; draft_medium: string | null;
+        contact_id: string | null;
       }>(
-        'SELECT summary_text, draft_content, suggested_action FROM briefing_items WHERE id = $1 AND tenant_id = $2',
+        'SELECT summary_text, draft_content, suggested_action, draft_medium, contact_id FROM briefing_items WHERE id = $1 AND tenant_id = $2',
         [briefingIdApprove, auth.tenantId],
       );
       if (!briefingRow.rows[0]) {
@@ -1159,26 +1286,213 @@ async function bootstrap(): Promise<void> {
         return;
       }
       const bItem = briefingRow.rows[0];
-      const approveCorrelationId = uuidv4();
-      const approveText = bItem.draft_content
-        ? `${bItem.suggested_action ?? 'follow_up'}: ${bItem.draft_content}`
-        : bItem.summary_text;
-      const approveMsg = normalizeInbound('mobile', {
-        text: approveText,
-        channelId: 'briefing',
-        userId: auth.tenantId,
-        username: 'agent',
-        correlationId: approveCorrelationId,
-      });
-      sendJson(res, 200, { ok: true, correlationId: approveCorrelationId });
-      setImmediate(async () => {
-        try {
-          const coordinator = await tenantRegistry.getOrCreate(auth.tenantId);
-          await coordinator.handleInbound(approveMsg);
-        } catch (err) {
-          log.error(`[Briefing:approve] Error for ${auth.tenantId}`, { error: (err as Error).message });
+
+      // Map briefing item fields to approval action type
+      const medium = (bItem.draft_medium as string | null) ?? 'sms';
+      const suggestedAction = (bItem.suggested_action as string | null) ?? '';
+      let actionType: ApprovalItem['actionType'] = 'send_sms';
+      if (medium === 'email' || suggestedAction.includes('email')) {
+        actionType = 'send_email';
+      }
+
+      const approvalItem: ApprovalItem = {
+        index: 0,
+        actionType,
+        preview: ((bItem.draft_content as string | null) ?? (bItem.summary_text as string)).slice(0, 200),
+        fullContent: (bItem.draft_content as string | null) ?? (bItem.summary_text as string),
+        medium,
+        recipients: (bItem.contact_id as string | null) ? [(bItem.contact_id as string)] : [],
+        originatingAgent: AgentId.COMMS,
+        taskResultId: uuidv4(),
+      };
+
+      try {
+        const coordinator = await tenantRegistry.getOrCreate(auth.tenantId);
+        const approvalRequest = await coordinator.approvalManager.createApprovalRequest([approvalItem]);
+        const approvalCorrelationId = uuidv4();
+
+        // Push TASK_COMPLETE so the WS handler also navigates (belt-and-suspenders)
+        wsSessionManager.push(auth.tenantId, {
+          type: 'TASK_COMPLETE',
+          correlationId: approvalCorrelationId,
+          tenantId: auth.tenantId,
+          timestamp: new Date().toISOString(),
+          payload: {
+            text: 'Action queued for approval.',
+            agentId: AgentId.COMMS,
+            processingMs: 0,
+            hasApproval: true,
+            approvalId: approvalRequest.approvalId,
+            source: 'briefing',
+          },
+        });
+
+        sendJson(res, 200, { ok: true, approvalId: approvalRequest.approvalId });
+      } catch (err) {
+        log.error(`[Briefing:approve] Error for ${auth.tenantId}`, { error: (err as Error).message });
+        sendJson(res, 500, { ok: false, error: 'Failed to create approval' });
+      }
+      return;
+    }
+
+    // ─── GET /v1/integrations/gmail/status (JWT required) ────────────────────
+    if (req.method === 'GET' && url.pathname === '/v1/integrations/gmail/status') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      if (!dbAvailable) { sendJson(res, 200, { connected: false, gmailAddress: null }); return; }
+      try {
+        const row = await query<{ gmail_address: string; revoked_at: string | null }>(
+          'SELECT gmail_address, revoked_at FROM tenant_gmail_auth WHERE tenant_id = $1',
+          [auth.tenantId],
+        );
+        const rec = row.rows[0];
+        sendJson(res, 200, {
+          connected: !!rec && !rec.revoked_at,
+          gmailAddress: rec && !rec.revoked_at ? rec.gmail_address : null,
+        });
+      } catch (err) {
+        log.error('[Gmail:status] DB error', { error: (err as Error).message });
+        sendJson(res, 500, { ok: false });
+      }
+      return;
+    }
+
+    // ─── DELETE /v1/integrations/gmail (JWT required) ─────────────────────────
+    if (req.method === 'DELETE' && url.pathname === '/v1/integrations/gmail') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      try {
+        // Revoke tokens from vault
+        await vault.delete('gmail' as never, 'access_token', auth.tenantId);
+        await vault.delete('gmail' as never, 'refresh_token', auth.tenantId);
+        await vault.delete('gmail' as never, 'expires_at', auth.tenantId);
+        // Stamp revoked_at and delete watch record
+        if (dbAvailable) {
+          await query(
+            'UPDATE tenant_gmail_auth SET revoked_at = NOW() WHERE tenant_id = $1',
+            [auth.tenantId],
+          );
+          await query('DELETE FROM gmail_watches WHERE tenant_id = $1', [auth.tenantId]);
         }
-      });
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        log.error('[Gmail:revoke] Error', { error: (err as Error).message });
+        sendJson(res, 500, { ok: false });
+      }
+      return;
+    }
+
+    // ─── POST /v1/integrations/gmail/analyze-tone (JWT required) ─────────────
+    if (req.method === 'POST' && url.pathname === '/v1/integrations/gmail/analyze-tone') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+      if (!dbAvailable) {
+        sendJson(res, 503, { ok: false, error: 'Database not available' });
+        return;
+      }
+      const gmailRow = await query<{ gmail_address: string }>(
+        'SELECT gmail_address FROM tenant_gmail_auth WHERE tenant_id = $1 AND revoked_at IS NULL',
+        [auth.tenantId],
+      );
+      if (!gmailRow.rows[0]) {
+        sendJson(res, 400, { error: 'Gmail not connected' });
+        return;
+      }
+      const cooldownRow = await query<{ tone_analyzed_at: string | null }>(
+        'SELECT tone_analyzed_at FROM tenants WHERE tenant_id = $1',
+        [auth.tenantId],
+      );
+      const last = cooldownRow.rows[0]?.tone_analyzed_at;
+      if (last && Date.now() - new Date(last).getTime() < 6 * 60 * 60 * 1000) {
+        sendJson(res, 429, { error: 'Tone analysis ran recently — try again in a few hours' });
+        return;
+      }
+      const toneQueue = getToneAnalysisQueue();
+      if (!toneQueue) {
+        sendJson(res, 503, { error: 'Tone analysis service unavailable' });
+        return;
+      }
+      await toneQueue.add('tone-analysis', { tenantId: auth.tenantId }, { attempts: 2, removeOnComplete: true });
+      sendJson(res, 202, { ok: true });
+      return;
+    }
+
+    // ─── GET /v1/paperwork/catalog ────────────────────────────────────────────
+    if (req.method === 'GET' && url.pathname === '/v1/paperwork/catalog') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+      void auth; // auth validated — catalog is same for all tenants
+      try {
+        const raw = await fs.readFile(path.join(CONFIG_DIR, 'paperwork-catalog.json'), 'utf-8');
+        sendJson(res, 200, JSON.parse(raw));
+      } catch {
+        sendJson(res, 500, { error: 'Catalog unavailable' });
+      }
+      return;
+    }
+
+    // ─── POST /v1/paperwork/send (JWT required) ───────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/paperwork/send') {
+      let auth: AuthContext;
+      try {
+        auth = requireAuth(req);
+      } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message });
+        return;
+      }
+
+      let body: { documentIds?: string[]; contactId?: string; note?: string };
+      try {
+        body = JSON.parse(await readBodySafe(req)) as typeof body;
+      } catch {
+        sendJson(res, 400, { error: 'Invalid request body' });
+        return;
+      }
+
+      const { documentIds = [], contactId = '', note = '' } = body;
+      if (documentIds.length === 0 || !contactId) {
+        sendJson(res, 400, { error: 'documentIds and contactId are required' });
+        return;
+      }
+
+      try {
+        // Load catalog to resolve document labels
+        const catalogRaw = await fs.readFile(path.join(CONFIG_DIR, 'paperwork-catalog.json'), 'utf-8');
+        const catalog = JSON.parse(catalogRaw) as { id: string; label: string }[];
+        const catalogMap = new Map(catalog.map(d => [d.id, d.label]));
+
+        const approvalItems: ApprovalItem[] = documentIds.map((docId, i) => ({
+          index: i,
+          actionType: 'send_document',
+          preview: `Send ${catalogMap.get(docId) ?? docId} to client`,
+          medium: 'email',
+          recipients: [contactId],
+          fullContent: note,
+          originatingAgent: AgentId.CONTENT,
+          taskResultId: uuidv4(),
+        }));
+
+        const coordinator = await tenantRegistry.getOrCreate(auth.tenantId);
+        const approvalRequest = await coordinator.approvalManager.createApprovalRequest(approvalItems);
+        sendJson(res, 202, { approvalId: approvalRequest.approvalId });
+      } catch (err) {
+        log.error('[Paperwork:send] Error', { error: (err as Error).message });
+        sendJson(res, 500, { error: 'Failed to create approval' });
+      }
       return;
     }
 
@@ -1399,6 +1713,8 @@ async function bootstrap(): Promise<void> {
           platforms: genPlatforms,
           preset: genPreset ?? 'new_listing',
           tone: genTone ?? 'Standard',
+          taskTypeHint: genTargetMode === 'staging' ? 'virtual_staging' : 'studio_generate',
+          targetAgent: 'content',
         },
       };
       sendJson(res, 202, { ok: true, correlationId: genCorrelationId });
@@ -1439,13 +1755,26 @@ async function bootstrap(): Promise<void> {
         featureJson?: object; tone?: string; preset?: string; keyFeatures?: string;
       };
       const regenCorrelationId = uuidv4();
-      const regenMsg = normalizeInbound('mobile', {
-        text: `Regenerate studio content using existing property features (no new photos). Preset: "${regenPreset ?? 'new_listing'}". Tone: ${regenTone ?? 'Standard'}. Key features: ${regenFeatures ?? 'same as before'}. Property features: ${JSON.stringify(featureJson ?? {})}. Produce: mlsDescription, instagramCaption, facebookPost, complianceFlags.`,
-        channelId: 'studio',
-        userId: auth.tenantId,
-        username: 'agent',
-        correlationId: regenCorrelationId,
-      });
+      const regenMsg = {
+        ...normalizeInbound('mobile', {
+          text: `Regenerate studio content. Preset: "${regenPreset ?? 'new_listing'}". Tone: ${regenTone ?? 'Standard'}. Key features: ${regenFeatures ?? 'same as before'}.`,
+          channelId: 'studio',
+          userId: auth.tenantId,
+          username: 'agent',
+          correlationId: regenCorrelationId,
+        }),
+        structuredData: {
+          targetMode: 'content',
+          images: [],
+          textPrompt: regenFeatures ?? '',
+          platforms: ['MLS', 'Instagram', 'Facebook'],
+          preset: regenPreset ?? 'new_listing',
+          tone: regenTone ?? 'Standard',
+          featureJson,
+          taskTypeHint: 'studio_generate',
+          targetAgent: 'content',
+        },
+      };
       sendJson(res, 202, { ok: true, correlationId: regenCorrelationId });
       setImmediate(async () => {
         try {
@@ -1496,6 +1825,18 @@ async function bootstrap(): Promise<void> {
     // ─── OAuth: initiate flow ─────────────────────────────────────────────────
     if (req.method === 'GET' && url.pathname.startsWith('/oauth/connect/')) {
       const integrationId = url.pathname.slice('/oauth/connect/'.length);
+
+      // Require auth — mobile app passes JWT as ?token= for browser-redirect flows
+      const tokenParam = url.searchParams.get('token');
+      const connectAuth = extractTenant(tokenParam
+        ? { headers: { authorization: `Bearer ${tokenParam}` } } as never
+        : req,
+      );
+      if (!connectAuth) {
+        sendJson(res, 401, { error: 'Authentication required to connect integrations' });
+        return;
+      }
+
       const clientId = await vault.retrieve(integrationId as never, 'client_id')
         ?? process.env[`CLAW_${integrationId.toUpperCase()}_CLIENT_ID`]
         ?? null;
@@ -1515,7 +1856,7 @@ async function bootstrap(): Promise<void> {
       }
 
       const state = uuidv4();
-      oauthStateStore.set(state, { integrationId, expiresAt: now + 10 * 60 * 1000 });
+      oauthStateStore.set(state, { integrationId, tenantId: connectAuth.tenantId, expiresAt: now + 10 * 60 * 1000 });
 
       const oauthConfig = {
         clientId,
@@ -1554,6 +1895,7 @@ async function bootstrap(): Promise<void> {
         return;
       }
 
+      const { tenantId: oauthTenantId } = stateEntry;
       oauthStateStore.delete(state!);
 
       try {
@@ -1573,8 +1915,32 @@ async function bootstrap(): Promise<void> {
 
         const handler = new OAuthHandler(vault);
         const tokens = await handler.exchangeCode(oauthConfig, code);
-        await handler.storeTokens(integrationId as never, tokens);
+        // Store tokens namespaced by tenantId so each agent's Gmail is isolated
+        await handler.storeTokens(integrationId as never, tokens, oauthTenantId);
         await setIntegrationEnabled(INTEGRATIONS_CONFIG, integrationId);
+
+        // For Gmail: fetch the connected address and upsert tenant_gmail_auth
+        if (integrationId === 'gmail' && dbAvailable) {
+          try {
+            const profileRes = await fetch('https://gmail.googleapis.com/gmail/v1/users/me/profile', {
+              headers: { Authorization: `Bearer ${tokens.accessToken}` },
+            });
+            const profile = await profileRes.json() as { emailAddress?: string; historyId?: string };
+            if (profile.emailAddress) {
+              await query(
+                `INSERT INTO tenant_gmail_auth (tenant_id, gmail_address, history_id)
+                 VALUES ($1, $2, $3)
+                 ON CONFLICT (tenant_id) DO UPDATE
+                   SET gmail_address = EXCLUDED.gmail_address,
+                       history_id    = EXCLUDED.history_id,
+                       revoked_at    = NULL`,
+                [oauthTenantId, profile.emailAddress, profile.historyId ?? null],
+              );
+            }
+          } catch (gmailErr) {
+            log.warn('[OAuth] Could not fetch Gmail profile after connect', { error: (gmailErr as Error).message });
+          }
+        }
 
         res.writeHead(200, { 'Content-Type': 'text/html' });
         res.end(`<html><body><h1>Connected!</h1><p>${integrationId} is now connected. You may close this window.</p></body></html>`);
@@ -1761,6 +2127,14 @@ async function bootstrap(): Promise<void> {
         log.error('[PATCH /v1/sms/opt-in] failed', { error: String(err) });
         sendJson(res, 500, { ok: false, error: 'Failed to update opt-in status' });
       }
+      return;
+    }
+
+    // ─── POST /webhooks/gmail — Google Pub/Sub push notification ──────────────
+    if (req.method === 'POST' && url.pathname === '/webhooks/gmail') {
+      let rawBody: string;
+      try { rawBody = await readBodySafe(req); } catch { res.writeHead(400); res.end(); return; }
+      await handleGmailWebhook(req, res, rawBody);
       return;
     }
 
@@ -2182,6 +2556,37 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    // ─── POST /dev/gmail/inject (non-production only) — simulate inbound email ─
+    if (req.method === 'POST' && url.pathname === '/dev/gmail/inject') {
+      if (process.env.NODE_ENV === 'production') {
+        sendJson(res, 404, { error: 'Not found' }); return;
+      }
+      let body: string;
+      try { body = await readBodySafe(req); } catch { sendJson(res, 400, { error: 'Bad request' }); return; }
+      const payload = JSON.parse(body) as { tenantId?: string; from?: string; subject?: string; body?: string };
+      if (!payload.tenantId || !payload.from) {
+        sendJson(res, 400, { error: 'tenantId and from are required' }); return;
+      }
+      // Enqueue directly — bypasses tenant_gmail_auth DB lookup so no OAuth setup is needed locally
+      const mockHistoryId = String(Date.now());
+      sendJson(res, 202, { ok: true, mockHistoryId });
+      setImmediate(async () => {
+        try {
+          const queue = getGmailIngestQueue();
+          if (!queue) { log.warn('[DEV gmail inject] Ingest queue not initialised (Redis unavailable?)'); return; }
+          await queue.add('gmail-ingest', {
+            tenantId: payload.tenantId,
+            emailAddress: payload.from ?? '',
+            newHistoryId: mockHistoryId,
+          }, { attempts: 3 });
+          log.info('[DEV gmail inject] Job enqueued', { tenantId: payload.tenantId, mockHistoryId });
+        } catch (err) {
+          log.error('[DEV gmail inject] Error', { error: (err as Error).message });
+        }
+      });
+      return;
+    }
+
     sendJson(res, 404, { error: 'Not found' });
   });
 
@@ -2296,6 +2701,15 @@ async function bootstrap(): Promise<void> {
     if (dealJobCleanup) {
       await dealJobCleanup().catch(() => {});
     }
+    if (gmailIngestCleanup) {
+      await gmailIngestCleanup().catch(() => {});
+    }
+    if (gmailWatchCleanup) {
+      await gmailWatchCleanup().catch(() => {});
+    }
+    if (toneAnalysisCleanup) {
+      await toneAnalysisCleanup().catch(() => {});
+    }
     if (redisClient) {
       await redisClient.quit().catch(() => {});
     }
@@ -2354,7 +2768,7 @@ function getTokenUrl(integrationId: string): string {
 function getScopes(integrationId: string): string[] {
   switch (integrationId) {
     case 'gmail':
-      return ['https://mail.google.com/'];
+      return ['https://www.googleapis.com/auth/gmail.modify'];
     case 'google_calendar':
       return ['https://www.googleapis.com/auth/calendar'];
     case 'google_drive':

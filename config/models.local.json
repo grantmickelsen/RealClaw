@@ -1,0 +1,47 @@
+{
+  "_comment": "Local development config — uses Ollama only (free). Run: CLAW_MODELS_CONFIG=config/models.local.json npm run dev",
+  "defaultProvider": "ollama",
+  "tierMapping": {
+    "fast": {
+      "provider": "ollama",
+      "model": "llama3.2:3b"
+    },
+    "balanced": {
+      "provider": "ollama",
+      "model": "llama3.1:8b"
+    },
+    "powerful": {
+      "provider": "ollama",
+      "model": "llama3.1:8b"
+    }
+  },
+  "fallbackChain": ["ollama"],
+  "agentOverrides": {},
+  "providers": {
+    "ollama": {
+      "id": "ollama",
+      "enabled": true,
+      "apiKeyEnvVar": "",
+      "baseUrl": "http://127.0.0.1:11434",
+      "rateLimitPerMinute": 999,
+      "models": [
+        {
+          "modelString": "llama3.2:3b",
+          "tier": "fast",
+          "contextWindow": 131072,
+          "supportsTools": true,
+          "supportsVision": false,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": true }
+        },
+        {
+          "modelString": "llama3.1:8b",
+          "tier": "balanced",
+          "contextWindow": 131072,
+          "supportsTools": true,
+          "supportsVision": false,
+          "pricing": { "inputPerMTok": 0, "outputPerMTok": 0, "isLocal": true }
+        }
+      ]
+    }
+  }
+}

@@ -21,6 +21,9 @@ services:
       # Override baseUrl at runtime so the gateway reaches Manifest by service name.
       # This value is read by the factory when CLAW_MANIFEST_ENDPOINT is set.
       CLAW_MANIFEST_ENDPOINT: http://manifest:3001
+      # Ollama is reachable at its Docker service name inside the claw-internal network.
+      CLAW_OLLAMA_HOST: ollama
+      CLAW_OLLAMA_PORT: "11434"
     restart: unless-stopped
     security_opt:
       - no-new-privileges:true
@@ -42,6 +45,8 @@ services:
       claw_db:
         condition: service_healthy
       redis:
+        condition: service_healthy
+      ollama:
         condition: service_healthy
 
   # ─── Manifest — Smart LLM Router ──────────────────────────────────────────
@@ -69,6 +74,8 @@ services:
       NODE_ENV: development
       # Trust same-LAN connections so the gateway container can call Manifest
       MANIFEST_TRUST_LAN: "true"
+      # selfhosted mode unlocks private/internal network URLs (needed for Ollama)
+      MANIFEST_MODE: selfhosted
     networks:
       - claw-internal
     depends_on:
@@ -152,35 +159,44 @@ services:
           memory: 1g
           cpus: '1.0'
 
-  # ─── LOCAL LLM (optional) ─────────────────────────────────────────────────
-  # Uncomment to run local models via Ollama. Requires NVIDIA GPU or enough
-  # CPU/RAM. After starting, pull models:
-  #   docker compose exec ollama ollama pull llama3.3:8b
-  # Then enable the ollama provider in config/models.json.
-
-  # ollama:
-  #   image: ollama/ollama:latest
-  #   ports:
-  #     - "11434:11434"
-  #   volumes:
-  #     - ollama-models:/root/.ollama
-  #   networks:
-  #     - claw-internal
-  #   restart: unless-stopped
-  #   healthcheck:
-  #     test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
-  #     interval: 30s
-  #     timeout: 10s
-  #     retries: 3
-  #   deploy:
-  #     resources:
-  #       reservations:
-  #         devices:
-  #           - driver: nvidia
-  #             count: all
-  #             capabilities: [gpu]
-  #       limits:
-  #         memory: 32g
+  # ─── LOCAL LLM ────────────────────────────────────────────────────────────
+  # Ollama serves local models at http://ollama:11434 inside the Docker network.
+  # Manifest can route to it as an OpenAI-compatible provider (see setup below).
+  #
+  # After starting, pull at least one model:
+  #   docker compose exec ollama ollama pull llama3.2:3b   # fast, low RAM
+  #   docker compose exec ollama ollama pull llama3.1:8b   # balanced quality
+  #
+  # Manifest dashboard setup (http://localhost:3001):
+  #   Settings → Providers → Add Provider
+  #   Type: OpenAI Compatible
+  #   Base URL: http://ollama:11434/v1
+  #   Model: llama3.2:3b  (or whichever you pulled)
+  #   Leave API key blank (Ollama requires none)
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama-models:/root/.ollama
+    networks:
+      - claw-internal
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    # GPU support (optional — remove deploy block if no GPU):
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+        limits:
+          memory: 32g
 
 networks:
   claw-internal:
@@ -190,5 +206,4 @@ networks:
 volumes:
   pgdata:
   claw_pgdata:
-  # Uncomment if using Ollama:
-  # ollama-models:
+  ollama-models:

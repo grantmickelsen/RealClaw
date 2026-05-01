@@ -10,6 +10,7 @@ import {
   TextInput,
   Modal,
   Switch,
+  ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
@@ -17,7 +18,7 @@ import type { Href } from 'expo-router';
 import * as SecureStore from 'expo-secure-store';
 import { useAuthStore } from '../../store/auth';
 import { useIntegrationsStore } from '../../store/integrations';
-import { usePreferencesStore } from '../../store/preferences';
+import { usePreferencesStore, DEFAULT_AUTO_APPROVAL_SETTINGS, type AutoApprovalSettings } from '../../store/preferences';
 import { useKioskStore, KIOSK_BIOMETRIC_KEY } from '../../store/kiosk';
 import { useSubscriptionStore } from '../../store/subscription';
 import { clearStoredTokens } from '../../lib/auth';
@@ -173,9 +174,13 @@ export default function SettingsScreen() {
   const setDevOverride     = useSubscriptionStore(s => s.setDevOverride);
   const devTierOverride    = useSubscriptionStore(s => s.devTierOverride);
 
-  const { clearTokens, tenantId } = useAuthStore();
+  const { clearTokens, tenantId, accessToken } = useAuthStore();
+  const [gmailConnected, setGmailConnected] = useState(false);
+  const [gmailAddress, setGmailAddress] = useState<string | null>(null);
+  const [gmailLoading, setGmailLoading] = useState(false);
   const { statuses, setStatuses } = useIntegrationsStore();
-  const { displayName, brokerage, phone, primaryZip, llmTier, setPreferences } = usePreferencesStore();
+  const { displayName, brokerage, phone, primaryZip, llmTier, toneAnalyzedAt, autoApprovalSettings, setPreferences } = usePreferencesStore();
+  const [toneAnalyzing, setToneAnalyzing] = useState(false);
 
   useEffect(() => {
     SecureStore.getItemAsync(PIN_STORE_KEY).then(v => setPinSet(!!v)).catch(() => {});
@@ -196,6 +201,19 @@ export default function SettingsScreen() {
 
   useEffect(() => { loadIntegrations(); }, [loadIntegrations]);
 
+  const loadGmailStatus = useCallback(async () => {
+    try {
+      const res = await authedFetch('/v1/integrations/gmail/status');
+      if (res.ok) {
+        const data = await res.json() as { connected: boolean; gmailAddress: string | null };
+        setGmailConnected(data.connected);
+        setGmailAddress(data.gmailAddress);
+      }
+    } catch { /* show stale */ }
+  }, []);
+
+  useEffect(() => { void loadGmailStatus(); }, [loadGmailStatus]);
+
   // Generic preference saver
   const savePref = async (updates: Record<string, unknown>) => {
     await authedFetch('/v1/preferences', {
@@ -204,6 +222,37 @@ export default function SettingsScreen() {
     });
     setPreferences(updates as Parameters<typeof setPreferences>[0]);
   };
+
+  function handleToggleAutoApproval(key: keyof AutoApprovalSettings, enableAuto: boolean) {
+    if (!enableAuto) {
+      // Turning off auto-send — no confirmation needed
+      const updated = { ...autoApprovalSettings, [key]: 'require' as const };
+      void savePref({ autoApprovalSettings: updated });
+      return;
+    }
+    const labels: Record<keyof AutoApprovalSettings, string> = {
+      send_email: 'Emails',
+      send_sms: 'Text Messages',
+      send_linkedin_dm: 'LinkedIn Messages',
+      modify_calendar: 'Calendar Changes',
+      post_social: 'Social Media Posts',
+      send_document: 'Document Delivery',
+    };
+    Alert.alert(
+      `Auto-send ${labels[key]}?`,
+      `Claw will send these without asking for your approval first. You can turn this off any time in Settings.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Enable Auto-Send',
+          onPress: () => {
+            const updated = { ...autoApprovalSettings, [key]: 'auto' as const };
+            void savePref({ autoApprovalSettings: updated });
+          },
+        },
+      ],
+    );
+  }
 
   async function handleSignOut() {
     Alert.alert(
@@ -227,8 +276,78 @@ export default function SettingsScreen() {
   }
 
   function handleConnect(integrationId: string) {
-    const url = `${API_BASE_URL}/oauth/connect/${integrationId}`;
+    // Pass JWT as query param so the server can scope the OAuth connection to this tenant
+    const tokenParam = accessToken ? `?token=${encodeURIComponent(accessToken)}` : '';
+    const url = `${API_BASE_URL}/oauth/connect/${integrationId}${tokenParam}`;
     Linking.openURL(url);
+  }
+
+  function handleConnectGmail() {
+    handleConnect('gmail');
+    // Reload status after a brief delay to reflect the new connection
+    setTimeout(() => void loadGmailStatus(), 4000);
+  }
+
+  async function handleDisconnectGmail() {
+    Alert.alert(
+      'Disconnect Gmail',
+      'This will stop RealClaw from reading your Gmail inbox for lead detection. Your existing contacts and briefing items will remain.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Disconnect',
+          style: 'destructive',
+          onPress: async () => {
+            setGmailLoading(true);
+            try {
+              await authedFetch('/v1/integrations/gmail', { method: 'DELETE' });
+              setGmailConnected(false);
+              setGmailAddress(null);
+            } catch {
+              Alert.alert('Error', 'Could not disconnect Gmail. Please try again.');
+            } finally {
+              setGmailLoading(false);
+            }
+          },
+        },
+      ],
+    );
+  }
+
+  const refreshPreferences = useCallback(async () => {
+    try {
+      const res = await authedFetch('/v1/preferences');
+      if (res.ok) {
+        const data = await res.json() as Parameters<typeof setPreferences>[0];
+        setPreferences(data);
+      }
+    } catch { /* best-effort */ }
+  }, [setPreferences]);
+
+  async function handleAnalyzeTone() {
+    setToneAnalyzing(true);
+    try {
+      const res = await authedFetch('/v1/integrations/gmail/analyze-tone', { method: 'POST' });
+      if (res.ok) {
+        Alert.alert('Analyzing Tone', 'Running in the background. Check back in about a minute.');
+        setTimeout(() => void refreshPreferences(), 90_000);
+      } else {
+        const d = await res.json() as { error?: string };
+        Alert.alert('Error', d.error ?? 'Could not start analysis');
+      }
+    } catch {
+      Alert.alert('Error', 'Network error — please try again');
+    } finally {
+      setToneAnalyzing(false);
+    }
+  }
+
+  function daysSince(iso: string): string {
+    const diffMs = Date.now() - new Date(iso).getTime();
+    const days = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+    if (days === 0) return 'today';
+    if (days === 1) return '1 day ago';
+    return `${days} days ago`;
   }
 
   return (
@@ -307,6 +426,56 @@ export default function SettingsScreen() {
           ))}
         </View>
 
+        {/* ── Approvals ── */}
+        <Text style={styles.sectionHeader}>Approvals</Text>
+        <Text style={styles.sectionSubheader}>
+          Choose which actions Claw sends automatically vs. routes to your approval carousel.
+        </Text>
+        <View style={styles.card}>
+          {(
+            [
+              { key: 'send_sms',          label: 'Text Messages',      subtitle: 'SMS to clients and leads' },
+              { key: 'send_email',         label: 'Emails',             subtitle: 'Emails to contacts' },
+              { key: 'send_linkedin_dm',   label: 'LinkedIn Messages',  subtitle: 'LinkedIn DMs' },
+              { key: 'modify_calendar',    label: 'Calendar Changes',   subtitle: 'Showing bookings and updates' },
+              { key: 'post_social',        label: 'Social Posts',       subtitle: 'Instagram, Facebook, LinkedIn posts' },
+              { key: 'send_document',      label: 'Document Delivery',  subtitle: 'Disclosures and paperwork' },
+            ] as { key: keyof AutoApprovalSettings; label: string; subtitle: string }[]
+          ).map(({ key, label, subtitle }, i, arr) => (
+            <View key={key}>
+              <View style={styles.approvalRow}>
+                <View style={styles.rowTextBlock}>
+                  <Text style={styles.rowLabel}>{label}</Text>
+                  <Text style={styles.rowSubtitle}>{subtitle}</Text>
+                </View>
+                <View style={styles.approvalToggleGroup}>
+                  <Text style={styles.approvalModeLabel}>
+                    {(autoApprovalSettings ?? DEFAULT_AUTO_APPROVAL_SETTINGS)[key] === 'auto' ? 'Auto-Send' : 'Require Approval'}
+                  </Text>
+                  <Switch
+                    value={(autoApprovalSettings ?? DEFAULT_AUTO_APPROVAL_SETTINGS)[key] === 'auto'}
+                    onValueChange={v => handleToggleAutoApproval(key, v)}
+                    trackColor={{ false: '#E5E7EB', true: '#BBF7D0' }}
+                    thumbColor={(autoApprovalSettings ?? DEFAULT_AUTO_APPROVAL_SETTINGS)[key] === 'auto' ? '#16A34A' : '#fff'}
+                  />
+                </View>
+              </View>
+              {i < arr.length - 1 && <View style={styles.divider} />}
+            </View>
+          ))}
+          <View style={styles.divider} />
+          <View style={styles.approvalRow}>
+            <View style={styles.rowTextBlock}>
+              <Text style={styles.rowLabel}>Financial Actions</Text>
+              <Text style={styles.rowSubtitle}>Offers, price changes, financial commitments</Text>
+            </View>
+            <View style={styles.approvalLocked}>
+              <Text style={styles.approvalLockedText}>Always Required</Text>
+              <Text style={styles.lockIcon}>🔒</Text>
+            </View>
+          </View>
+        </View>
+
         {/* ── Integrations ── */}
         <Text style={styles.sectionHeader}>Integrations</Text>
         {statuses.length === 0 ? (
@@ -323,6 +492,51 @@ export default function SettingsScreen() {
             ))}
           </View>
         )}
+
+        {/* ── Gmail ── */}
+        <Text style={styles.sectionHeader}>Gmail</Text>
+        <View style={styles.card}>
+          <View style={styles.row}>
+            <View style={styles.rowTextBlock}>
+              <Text style={styles.rowLabel}>Gmail Integration</Text>
+              <Text style={styles.rowSubtitle}>
+                {gmailConnected && gmailAddress
+                  ? `Connected: ${gmailAddress}`
+                  : 'Receive and process lead emails automatically'}
+              </Text>
+            </View>
+            {gmailLoading ? (
+              <ActivityIndicator size="small" color="#0066FF" />
+            ) : gmailConnected ? (
+              <TouchableOpacity onPress={() => void handleDisconnectGmail()}>
+                <Text style={[styles.rowValue, { color: '#FF3B30' }]}>Disconnect</Text>
+              </TouchableOpacity>
+            ) : (
+              <TouchableOpacity onPress={handleConnectGmail}>
+                <Text style={[styles.rowValue, { color: '#0066FF' }]}>Connect →</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+          {gmailConnected && (
+            <View style={styles.row}>
+              <View style={styles.rowTextBlock}>
+                <Text style={styles.rowLabel}>Writing Style</Text>
+                <Text style={styles.rowSubtitle}>
+                  {toneAnalyzedAt ? `Analyzed ${daysSince(toneAnalyzedAt)}` : 'Not yet analyzed'}
+                </Text>
+              </View>
+              {toneAnalyzing ? (
+                <ActivityIndicator size="small" color="#0066FF" />
+              ) : (
+                <TouchableOpacity onPress={() => void handleAnalyzeTone()}>
+                  <Text style={[styles.rowValue, { color: '#0066FF' }]}>
+                    {toneAnalyzedAt ? 'Re-analyze' : 'Analyze →'}
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+        </View>
 
         {/* ── Kiosk ── */}
         <Text style={styles.sectionHeader}>Open House Kiosk</Text>
@@ -527,6 +741,41 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   signOutText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  sectionSubheader: {
+    fontSize: 13,
+    color: '#888',
+    paddingHorizontal: 16,
+    marginTop: -8,
+    marginBottom: 10,
+    lineHeight: 18,
+  },
+  approvalRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 16,
+    paddingVertical: 13,
+    justifyContent: 'space-between',
+  },
+  approvalToggleGroup: {
+    alignItems: 'flex-end',
+    gap: 4,
+  },
+  approvalModeLabel: {
+    fontSize: 11,
+    color: '#888',
+    fontWeight: '500',
+  },
+  approvalLocked: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+  approvalLockedText: {
+    fontSize: 13,
+    color: '#888',
+    fontWeight: '500',
+  },
+  lockIcon: { fontSize: 14 },
 });
 
 const pinModalStyles = StyleSheet.create({

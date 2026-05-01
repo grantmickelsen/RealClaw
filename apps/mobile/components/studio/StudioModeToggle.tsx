@@ -7,8 +7,9 @@ interface Props {
 }
 
 const OPTIONS: { value: StudioMode; label: string }[] = [
-  { value: 'content', label: 'Marketing Content' },
-  { value: 'staging', label: 'Virtual Staging' },
+  { value: 'content',   label: 'Marketing' },
+  { value: 'staging',   label: 'Staging' },
+  { value: 'paperwork', label: 'Paperwork' },
 ];
 
 export function StudioModeToggle({ mode, onSelect }: Props) {
@@ -53,6 +54,6 @@ const styles = StyleSheet.create({
     shadowRadius: 3,
     elevation: 2,
   },
-  label: { fontSize: 14, fontWeight: '500', color: '#888' },
+  label: { fontSize: 13, fontWeight: '500', color: '#888' },
   labelActive: { color: '#0066FF', fontWeight: '700' },
 });

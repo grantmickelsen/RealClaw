@@ -31,6 +31,7 @@ interface ToneQuestion {
   question: string;
   type: 'text' | 'toggle' | 'slider';
   placeholders?: string[];
+  tall?: boolean;
 }
 
 const TONE_QUESTIONS: ToneQuestion[] = [
@@ -63,6 +64,17 @@ const TONE_QUESTIONS: ToneQuestion[] = [
     question: 'How formal do you want written communication to be?',
     type: 'slider',
     placeholders: ['Casual & friendly', 'Warm & professional', 'Polished & professional', 'Formal & precise', 'Highly professional'],
+  },
+  {
+    key: 'writingSample',
+    question: 'Paste a message you\'ve actually sent to a client. This teaches Claw your exact voice.',
+    type: 'text',
+    tall: true,
+    placeholders: [
+      'Hi Sarah! Just wanted to check in — found a couple new listings that match your criteria perfectly...',
+      'Hey John, quick update on the offer. They countered at $650k but I think we can get them down...',
+      'Hi there! Congrats again on the accepted offer. Here\'s what happens next...',
+    ],
   },
 ];
 
@@ -498,14 +510,14 @@ function VoiceStep({
         {q.type === 'text' && (
           <View>
             <TextInput
-              style={styles.toneInput}
+              style={[styles.toneInput, q.tall ? styles.toneInputTall : null]}
               value={textVal}
               onChangeText={setTextVal}
               multiline
               placeholderTextColor="transparent"
               returnKeyType="done"
             />
-            <Animated.Text style={[styles.tonePlaceholder, { opacity: fadeAnim }, textVal ? { opacity: 0 } : null]}>
+            <Animated.Text style={[styles.tonePlaceholder, q.tall ? styles.tonePlaceholderTall : null, { opacity: fadeAnim }, textVal ? { opacity: 0 } : null]}>
               {placeholder}
             </Animated.Text>
           </View>
@@ -789,6 +801,11 @@ const styles = StyleSheet.create({
     minHeight: 60,
     textAlignVertical: 'top',
   },
+  toneInputTall: {
+    minHeight: 130,
+    fontSize: 14,
+    lineHeight: 20,
+  },
   tonePlaceholder: {
     position: 'absolute',
     top: 0,
@@ -798,6 +815,10 @@ const styles = StyleSheet.create({
     color: '#bbb',
     fontStyle: 'italic',
     pointerEvents: 'none',
+  },
+  tonePlaceholderTall: {
+    fontSize: 14,
+    lineHeight: 20,
   },
   tonePlaceholderInline: {
     position: 'relative',

@@ -14,7 +14,7 @@ export type DraftField = 'mlsDescription' | 'instagramCaption' | 'facebookPost' 
 
 type Preset = 'new_listing' | 'just_sold' | 'open_house_recap' | 'price_reduction';
 type Tone = 'Luxury' | 'Approachable' | 'Investor' | 'First-Time Buyer' | 'Standard';
-export type StudioMode = 'content' | 'staging';
+export type StudioMode = 'content' | 'staging' | 'paperwork';
 
 interface StudioState {
   loading: boolean;
@@ -28,6 +28,9 @@ interface StudioState {
   drafts: DraftSet | null;
   stagedImageUrl: string | null;
   pendingCorrelationId: string | null;
+  pendingApprovalId: string | null;
+  contactId: string | null;
+  contactName: string | null;
 
   setLoading(v: boolean): void;
   setTargetMode(mode: StudioMode): void;
@@ -40,6 +43,8 @@ interface StudioState {
   setStagingResult(url: string): void;
   updateDraft(field: DraftField, value: string): void;
   setPendingCorrelationId(id: string | null): void;
+  setPendingApprovalId(id: string | null): void;
+  setContact(id: string | null, name: string | null): void;
   reset(): void;
 }
 
@@ -55,10 +60,13 @@ export const useStudioStore = create<StudioState>((set) => ({
   drafts: null,
   stagedImageUrl: null,
   pendingCorrelationId: null,
+  pendingApprovalId: null,
+  contactId: null,
+  contactName: null,
 
   setLoading: (v) => set({ loading: v }),
 
-  setTargetMode: (mode) => set({ targetMode: mode, drafts: null, stagedImageUrl: null, featureJson: null }),
+  setTargetMode: (mode) => set({ targetMode: mode, drafts: null, stagedImageUrl: null, featureJson: null, pendingApprovalId: null }),
 
   setPreset: (preset) => set({ preset, drafts: null, featureJson: null }),
 
@@ -75,6 +83,10 @@ export const useStudioStore = create<StudioState>((set) => ({
   setStagingResult: (url) => set({ stagedImageUrl: url, loading: false, pendingCorrelationId: null }),
 
   setPendingCorrelationId: (id) => set({ pendingCorrelationId: id }),
+
+  setPendingApprovalId: (id) => set({ pendingApprovalId: id }),
+
+  setContact: (id, name) => set({ contactId: id, contactName: name }),
 
   updateDraft: (field, value) => set((s) => {
     if (!s.drafts) return s;
@@ -96,6 +108,9 @@ export const useStudioStore = create<StudioState>((set) => ({
     stagedImageUrl: null,
     keyFeatures: '',
     pendingCorrelationId: null,
+    pendingApprovalId: null,
+    contactId: null,
+    contactName: null,
     platforms: ['MLS', 'Instagram', 'Facebook'],
     stagingStyle: 'Modern',
   }),

@@ -5,9 +5,11 @@
       "authMethod": "oauth2",
       "owningAgent": "comms",
       "baseUrl": "https://gmail.googleapis.com",
-      "scopes": ["https://mail.google.com/"],
+      "scopes": [
+        "https://www.googleapis.com/auth/gmail.modify"
+      ],
       "rateLimitPerMinute": 250,
-      "enabled": false,
+      "enabled": true,
       "healthCheckEndpoint": "/gmail/v1/users/me/profile"
     },
     {
@@ -15,7 +17,9 @@
       "authMethod": "oauth2",
       "owningAgent": "calendar",
       "baseUrl": "https://www.googleapis.com",
-      "scopes": ["https://www.googleapis.com/auth/calendar"],
+      "scopes": [
+        "https://www.googleapis.com/auth/calendar"
+      ],
       "rateLimitPerMinute": 60,
       "enabled": false,
       "healthCheckEndpoint": "/calendar/v3/users/me/calendarList"
@@ -25,7 +29,10 @@
       "authMethod": "oauth2",
       "owningAgent": "relationship",
       "baseUrl": "https://api.hubapi.com",
-      "scopes": ["crm.objects.contacts.read", "crm.objects.contacts.write"],
+      "scopes": [
+        "crm.objects.contacts.read",
+        "crm.objects.contacts.write"
+      ],
       "rateLimitPerMinute": 100,
       "enabled": false
     },
@@ -42,7 +49,9 @@
       "authMethod": "oauth2",
       "owningAgent": "ops",
       "baseUrl": "https://www.googleapis.com",
-      "scopes": ["https://www.googleapis.com/auth/drive"],
+      "scopes": [
+        "https://www.googleapis.com/auth/drive"
+      ],
       "rateLimitPerMinute": 100,
       "enabled": false
     },
@@ -51,7 +60,9 @@
       "authMethod": "oauth2",
       "owningAgent": "content",
       "baseUrl": "https://api.bufferapp.com",
-      "scopes": ["publish"],
+      "scopes": [
+        "publish"
+      ],
       "rateLimitPerMinute": 60,
       "enabled": false
     },
@@ -60,7 +71,9 @@
       "authMethod": "oauth2",
       "owningAgent": "transaction",
       "baseUrl": "https://www.docusign.net",
-      "scopes": ["signature"],
+      "scopes": [
+        "signature"
+      ],
       "rateLimitPerMinute": 60,
       "enabled": false
     },

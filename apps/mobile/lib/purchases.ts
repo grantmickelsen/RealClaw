@@ -144,5 +144,6 @@ export function addPurchaseListener(
 ): () => void {
   if (isBypassEnabled()) return () => {};
   const listener = Purchases.addCustomerInfoUpdateListener(callback);
-  return () => listener.remove();
+  // Expo Go browser mode returns a listener without .remove() — guard defensively
+  return () => { if (listener && typeof (listener as { remove?: () => void }).remove === 'function') (listener as { remove: () => void }).remove(); };
 }

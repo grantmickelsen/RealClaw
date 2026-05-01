@@ -138,12 +138,12 @@ describe('TransactionAgent', () => {
     expect(response.data['status']).toBe('Transaction content');
   });
 
-  it('heartbeat returns ready with openTransactions: 0', async () => {
+  it('heartbeat returns ready with openDeals: 0', async () => {
     const agent = makeAgent();
     const result = await agent.handleTask(makeRequest({ taskType: 'heartbeat' }));
 
     expect(result.result['status']).toBe('ready');
-    expect(result.result['openTransactions']).toBe(0);
+    expect(result.result['openDeals']).toBe(0);
   });
 });
 

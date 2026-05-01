@@ -6,6 +6,7 @@ import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSectio
 export class CommsAgent extends BaseAgent {
   async handleTask(request: TaskRequest): Promise<TaskResult> {
     const start = Date.now();
+    const toneModel = await this.getToneModel();
     try {
       switch (request.taskType) {
         case 'email_draft':
@@ -21,7 +22,6 @@ export class CommsAgent extends BaseAgent {
             }, { processingMs: Date.now() - start });
           }
 
-          const toneModel = await this.getToneModel();
           const draft = await this.ask(
             `Draft a professional email for the following request:\n\n${request.instructions}\n\nContact context:\n${contextData}\n\nTone guide:\n${toneModel}`,
             ModelTier.BALANCED,
@@ -63,9 +63,8 @@ export class CommsAgent extends BaseAgent {
             }, { processingMs: Date.now() - start });
           }
 
-          const toneModel = await this.getToneModel();
           const dm = await this.ask(
-            `Draft a professional LinkedIn DM for: ${request.instructions}\n\nContact context:\n${contextData}\n\nTone:\n${toneModel}\n\nMax 300 chars.`,
+            `Draft a professional LinkedIn DM for: ${request.instructions}\n\nContact context:\n${contextData}\n\nTone guide:\n${toneModel}\n\nMax 300 chars.`,
             ModelTier.BALANCED,
           );
 
@@ -83,7 +82,7 @@ export class CommsAgent extends BaseAgent {
 
         case 'letter_draft': {
           const formal = await this.ask(
-            `Draft a formal business letter for: ${request.instructions}\n\nFormat: Dear [Name],\n[Body]\n\nSincerely,\nGrant Mickelsen\nReal Estate Professional`,
+            `Draft a formal business letter for: ${request.instructions}\n\nFormat: Dear [Name],\n[Body]\n\nSincerely,\n[Agent Name]\nReal Estate Professional\n\nTone guide:\n${toneModel}`,
             ModelTier.BALANCED,
           );
           return this.successResult(request, { text: formal }, {
@@ -104,7 +103,7 @@ export class CommsAgent extends BaseAgent {
           const previous = String(request.data['previousSuggestions'] ?? '');
           const previousHint = previous ? `\n\nDo NOT repeat these suggestions:\n${previous}` : '';
           const raw = await this.ask(
-            `You are drafting SMS reply suggestions for a real estate agent. Be concise (under 120 chars each), professional, and conversational.
+            `You are drafting SMS reply suggestions for a real estate agent. Be concise (under 120 chars each), conversational, and true to the agent's voice.
 
 Contact profile: ${profile || 'No profile available'}
 
@@ -115,6 +114,9 @@ Generate exactly 3 distinct reply options:
 1. A direct follow-up on their most recent message or question
 2. An action CTA (schedule showing, send listing, request call)
 3. A warm nurture reply (lower-pressure, relationship-building)${previousHint}
+
+Tone guide (match this voice, adapted for SMS brevity):
+${toneModel}
 
 Return ONLY a JSON array of 3 strings. Example: ["Reply 1", "Reply 2", "Reply 3"]`,
             ModelTier.FAST,
@@ -150,7 +152,10 @@ Return ONLY a JSON array of 3 strings. Example: ["Reply 1", "Reply 2", "Reply 3"
             });
           }
 
-          const draft = await this.ask(request.instructions, ModelTier.BALANCED);
+          const draft = await this.ask(
+            `${request.instructions}\n\nTone guide:\n${toneModel}`,
+            ModelTier.BALANCED,
+          );
           return this.successResult(request, { draft }, {
             resultType: 'draft',
             approval: {
@@ -164,12 +169,81 @@ Return ONLY a JSON array of 3 strings. Example: ["Reply 1", "Reply 2", "Reply 3"
           });
         }
 
+        case 'email_ingest': {
+          const fromAddress  = String(request.data['fromAddress']  ?? '');
+          const fromName     = String(request.data['fromName']     ?? '');
+          const subject      = String(request.data['subject']      ?? '');
+          const bodyText     = String(request.data['bodyText']     ?? '');
+          const contactId    = request.context.contactId ?? null;
+          const inboundId    = String(request.data['inboundEmailId'] ?? '');
+
+          const raw = await this.ask(
+            `You are analyzing an inbound email to a real estate agent. Extract structured lead intelligence.
+
+From: ${fromName ? `${fromName} <${fromAddress}>` : fromAddress}
+Subject: ${subject}
+Body (first 2000 chars):
+${bodyText}
+
+${contactId ? `This sender is already in the agent’s contacts (id: ${contactId}).` : "This sender is NOT yet in the agent’s contacts."}
+
+Return a JSON object with these fields:
+- senderIntent: "buying" | "selling" | "info" | "referral" | "vendor" | "other"
+- urgencyScore: 1-10 (10 = most urgent; 8+ means create a briefing card)
+- leadInfo: { name: string|null, phone: string|null, budget: string|null, timeline: string|null, propertyInterest: string|null }
+- suggestedAction: "call" | "sms" | "email_reply" | "schedule_showing" | "ignore"
+- draftReply: string (2-3 sentence reply ready for agent review; address sender by first name if known; match the tone guide below)
+
+Tone guide for draftReply:
+${toneModel}
+
+Return ONLY the JSON object.`,
+            ModelTier.BALANCED,
+          );
+
+          let extracted: Record<string, unknown> = {};
+          try {
+            const match = raw.match(/\{[\s\S]*\}/);
+            if (match) extracted = JSON.parse(match[0]) as Record<string, unknown>;
+          } catch { /* best-effort */ }
+
+          const urgencyScore = Math.min(10, Math.max(1, Number(extracted['urgencyScore'] ?? 3)));
+
+          // Side effect: update the inbound_emails row with extracted data
+          const sideEffects = inboundId ? [{
+            targetAgent: this.id,
+            action: 'update_inbound_email',
+            data: { inboundEmailId: inboundId, extractedData: extracted },
+          }] : [];
+
+          return this.successResult(request, {
+            extracted,
+            text: `Email from ${fromName || fromAddress} classified as ${String(extracted['senderIntent'] ?? 'unknown')} (urgency ${urgencyScore}/10).`,
+          }, {
+            resultType: 'structured_data',
+            processingMs: Date.now() - start,
+            // High-urgency lead emails surface as a briefing card
+            ...(urgencyScore >= 7 ? {
+              approval: {
+                actionType: 'send_email',
+                preview: String(extracted['draftReply'] ?? '').slice(0, 200),
+                recipients: [fromAddress],
+                medium: 'email' as const,
+                fullContent: String(extracted['draftReply'] ?? ''),
+              },
+            } : {}),
+          });
+        }
+
         case 'heartbeat': {
           return this.successResult(request, { status: 'ready' }, { processingMs: Date.now() - start });
         }
 
         default: {
-          const response = await this.callLlm(request.instructions, ModelTier.BALANCED);
+          const response = await this.callLlm(
+            `${request.instructions}\n\nTone guide:\n${toneModel}`,
+            ModelTier.BALANCED,
+          );
           return this.successResult(request, { text: response.text }, { processingMs: Date.now() - start, llmResponse: response });
         }
       }
@@ -236,11 +310,22 @@ Return ONLY a JSON array of 3 strings. Example: ["Reply 1", "Reply 2", "Reply 3"
   }
 
   private async getToneModel(): Promise<string> {
+    const sections: string[] = [];
+
+    // Structured preferences from onboarding (salutation, formality, emoji, writing sample)
     try {
-      const mem = await this.readMemory({ path: 'client-profile/tone-model.md' });
-      return mem.content;
-    } catch {
-      return 'Professional, warm, first-name basis. Concise sentences.';
-    }
+      const prefs = await this.readMemory({ path: 'client-profile/tone-prefs.md' });
+      if (prefs.content.trim()) sections.push(prefs.content.trim());
+    } catch { /* not yet set */ }
+
+    // LLM-analyzed style model extracted from sent emails
+    try {
+      const analyzed = await this.readMemory({ path: 'client-profile/tone-model.md' });
+      if (analyzed.content.trim()) sections.push(`## Style Analysis (from sent emails)\n\n${analyzed.content.trim()}`);
+    } catch { /* not yet analyzed */ }
+
+    return sections.length > 0
+      ? sections.join('\n\n---\n\n')
+      : 'Professional, warm, first-name basis. Concise sentences.';
   }
 }

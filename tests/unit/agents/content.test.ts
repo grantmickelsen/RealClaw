@@ -138,5 +138,107 @@ describe('ContentAgent', () => {
     expect(result.status).toBe('success');
     expect(result.result['status']).toBe('ready');
   });
+
+  // ─── studio_generate ───────────────────────────────────────────────────────
+
+  it('studio_generate returns JSON with mlsDescription and platform copies', async () => {
+    const draftJson = JSON.stringify({
+      mlsDescription: '3BR/2BA in prime Santa Barbara location',
+      instagramCaption: '#JustListed ✨ Stunning 3-bed home',
+      facebookPost: 'New listing alert! Beautiful 3-bed in Santa Barbara.',
+    });
+    mockLlmRouter.complete.mockResolvedValueOnce({ text: draftJson, inputTokens: 100, outputTokens: 200, model: 'test', provider: 'anthropic', latencyMs: 100, estimatedCostUsd: 0.001 });
+
+    const agent = makeAgent();
+    // compliance query defaults to passed (no queryTargets in mockConfig → catch returns {passed:true, flags:[]})
+    const result = await agent.handleTask(makeRequest({
+      taskType: 'studio_generate',
+      data: { preset: 'new_listing', tone: 'Standard', textPrompt: '3BR in Santa Barbara', platforms: ['MLS', 'Instagram', 'Facebook'] },
+    }));
+
+    // Clean content flows through approval gate
+    expect(result.status).toBe('needs_approval');
+    expect(result.approval?.actionType).toBe('post_social');
+
+    const parsed = JSON.parse(result.result['text'] as string) as Record<string, unknown>;
+    expect(parsed).toHaveProperty('mlsDescription');
+    expect(parsed).toHaveProperty('instagramCaption');
+    expect(parsed['complianceFlags']).toEqual([]);
+  });
+
+  it('studio_generate with compliance flags returns success (no approval gate) and includes flags', async () => {
+    const draftJson = JSON.stringify({ mlsDescription: 'Walk to best schools' });
+    mockLlmRouter.complete.mockResolvedValueOnce({ text: draftJson, inputTokens: 80, outputTokens: 150, model: 'test', provider: 'anthropic', latencyMs: 80, estimatedCostUsd: 0 });
+
+    const agent = makeAgent();
+    vi.spyOn(agent as never, 'queryAgent').mockResolvedValue({
+      messageId: 'q-resp', timestamp: new Date().toISOString(), correlationId: 'c1',
+      type: 'QUERY_RESPONSE', fromAgent: 'compliance' as never, toAgent: 'content' as never,
+      queryId: 'q1', found: true,
+      data: { passed: false, flags: [{ text: 'steering_language' }] },
+    });
+
+    const result = await agent.handleTask(makeRequest({
+      taskType: 'studio_generate',
+      data: { preset: 'new_listing', tone: 'Standard', textPrompt: 'Walk to best schools', platforms: ['MLS'] },
+    }));
+
+    expect(result.status).toBe('success');
+    expect(result.approval).toBeUndefined();
+    const parsed = JSON.parse(result.result['text'] as string) as Record<string, unknown>;
+    expect(parsed['complianceFlags']).toEqual(['steering_language']);
+  });
+
+  it('studio_generate text field is parseable JSON containing all requested platforms', async () => {
+    const draftJson = JSON.stringify({
+      mlsDescription: 'MLS copy',
+      instagramCaption: 'IG caption',
+      facebookPost: 'FB post',
+      emailContent: 'Email body',
+      smsText: 'SMS text',
+    });
+    mockLlmRouter.complete.mockResolvedValueOnce({ text: draftJson, inputTokens: 50, outputTokens: 300, model: 'test', provider: 'anthropic', latencyMs: 120, estimatedCostUsd: 0 });
+
+    const agent = makeAgent();
+    const result = await agent.handleTask(makeRequest({
+      taskType: 'studio_generate',
+      data: { preset: 'new_listing', tone: 'Luxury', textPrompt: '5BR estate', platforms: ['MLS', 'Instagram', 'Facebook', 'Email', 'SMS'] },
+    }));
+
+    const parsed = JSON.parse(result.result['text'] as string) as Record<string, unknown>;
+    expect(parsed).toHaveProperty('mlsDescription');
+    expect(parsed).toHaveProperty('instagramCaption');
+    expect(parsed).toHaveProperty('facebookPost');
+    expect(parsed).toHaveProperty('emailContent');
+    expect(parsed).toHaveProperty('smsText');
+  });
+
+  // ─── virtual_staging ───────────────────────────────────────────────────────
+
+  it('virtual_staging returns stagedImageUrl JSON', async () => {
+    const agent = makeAgent();
+    vi.spyOn(agent as never, 'stageRoom').mockResolvedValue('https://cdn.example.com/staged-room.jpg');
+
+    const result = await agent.handleTask(makeRequest({
+      taskType: 'virtual_staging',
+      data: { images: ['data:image/jpeg;base64,/9j/test'], textPrompt: 'Modern minimalist' },
+    }));
+
+    expect(result.status).toBe('success');
+    const parsed = JSON.parse(result.result['text'] as string) as { stagedImageUrl: string };
+    expect(parsed.stagedImageUrl).toBe('https://cdn.example.com/staged-room.jpg');
+    expect(result.result['stagedImageUrl']).toBe('https://cdn.example.com/staged-room.jpg');
+  });
+
+  it('virtual_staging returns failure when no image is provided', async () => {
+    const agent = makeAgent();
+    const result = await agent.handleTask(makeRequest({
+      taskType: 'virtual_staging',
+      data: { images: [], textPrompt: 'Modern' },
+    }));
+
+    expect(result.status).toBe('failed');
+    expect((result.result['error'] as string)).toContain('No image');
+  });
 });
 

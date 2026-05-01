@@ -3,7 +3,7 @@
 CREATE TABLE deals (
   id                    UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   tenant_id             TEXT NOT NULL REFERENCES tenants(tenant_id) ON DELETE CASCADE,
-  contact_id            TEXT REFERENCES contacts(id),
+  contact_id            TEXT,
   deal_type             TEXT NOT NULL DEFAULT 'buyer'
                           CHECK (deal_type IN ('buyer', 'seller', 'dual')),
   address               TEXT NOT NULL,

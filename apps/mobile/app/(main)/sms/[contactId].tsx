@@ -5,7 +5,7 @@ import {
 } from 'react-native';
 import { useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { useSmsStore, type SmsMessage } from '../../../store/sms';
+import { useSmsStore, type SmsMessage, EMPTY_MESSAGES, EMPTY_SUGGESTIONS } from '../../../store/sms';
 import { useContactsStore } from '../../../store/contacts';
 import { authedFetch } from '../../../lib/api';
 import { ThreadHeader } from '../../../components/sms/ThreadHeader';
@@ -14,15 +14,15 @@ import { SuggestionBar } from '../../../components/sms/SuggestionBar';
 import { OptInSheet } from '../../../components/sms/OptInSheet';
 
 export default function ThreadScreen() {
-  const { contactId } = useLocalSearchParams<{ contactId: string }>();
+  const { contactId, draft } = useLocalSearchParams<{ contactId: string; draft?: string }>();
   const [inputText, setInputText] = useState('');
   const [sending, setSending] = useState(false);
   const [showOptIn, setShowOptIn] = useState(false);
   const [pendingOptIn, setPendingOptIn] = useState(false);
   const flatRef = useRef<FlatList<SmsMessage>>(null);
 
-  const messages = useSmsStore(s => s.threads[contactId] ?? []);
-  const suggestions = useSmsStore(s => s.suggestions[contactId] ?? []);
+  const messages = useSmsStore(s => s.threads[contactId] ?? EMPTY_MESSAGES);
+  const suggestions = useSmsStore(s => s.suggestions[contactId] ?? EMPTY_SUGGESTIONS);
   const suggestionsLoading = useSmsStore(s => s.suggestionsLoading[contactId] ?? false);
   const { setThread, appendMessage, setSuggestions, setSuggestionsLoading, markRead } = useSmsStore();
 
@@ -32,7 +32,8 @@ export default function ThreadScreen() {
     void loadThread();
     void loadSuggestions();
     markRead(contactId);
-  }, [contactId]);
+    if (draft) setInputText(decodeURIComponent(draft));
+  }, [contactId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function loadThread() {
     try {

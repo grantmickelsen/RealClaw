@@ -49,6 +49,9 @@ interface SmsState {
   markRead(contactId: string): void;
 }
 
+export const EMPTY_MESSAGES: SmsMessage[] = [];
+export const EMPTY_SUGGESTIONS: string[] = [];
+
 export const useSmsStore = create<SmsState>((set, get) => ({
   conversations: [],
   threads: {},
@@ -56,7 +59,7 @@ export const useSmsStore = create<SmsState>((set, get) => ({
   suggestionsLoading: {},
 
   setConversations(conversations) {
-    set({ conversations });
+    set({ conversations: conversations ?? [] });
   },
 
   upsertConversation(conv) {

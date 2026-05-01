@@ -77,7 +77,8 @@ export class GmailIntegration extends BaseIntegration {
   }
 
   protected override async handleUnauthorized(): Promise<void> {
-    const refreshToken = await this.vault.retrieve(IntegrationId.GMAIL, 'refresh_token');
+    const tid = this.tenantId !== 'default' ? this.tenantId : undefined;
+    const refreshToken = await this.vault.retrieve(IntegrationId.GMAIL, 'refresh_token', tid);
     if (!refreshToken) throw new IntegrationError(IntegrationId.GMAIL, 'No refresh token', 401, false);
 
     const clientId = process.env.CLAW_GMAIL_CLIENT_ID ?? '';
@@ -96,10 +97,10 @@ export class GmailIntegration extends BaseIntegration {
 
     const tokens = await response.json() as { access_token?: string; expires_in?: number };
     if (tokens.access_token) {
-      await this.vault.store(IntegrationId.GMAIL, 'access_token', tokens.access_token);
+      await this.vault.store(IntegrationId.GMAIL, 'access_token', tokens.access_token, tid);
       if (tokens.expires_in) {
         const expiresAt = new Date(Date.now() + tokens.expires_in * 1000).toISOString();
-        await this.vault.store(IntegrationId.GMAIL, 'expires_at', expiresAt);
+        await this.vault.store(IntegrationId.GMAIL, 'expires_at', expiresAt, tid);
       }
     }
   }

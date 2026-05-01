@@ -5,7 +5,7 @@ function makeMsg(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
     id: 'msg-1',
     correlationId: 'corr-1',
-    role: 'user',
+    role: 'assistant',
     text: 'Hello',
     status: 'done',
     timestamp: new Date().toISOString(),

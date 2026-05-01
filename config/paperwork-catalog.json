@@ -1,0 +1,66 @@
+[
+  {
+    "id": "tds",
+    "label": "Transfer Disclosure Statement",
+    "short": "TDS",
+    "required": true,
+    "applicability": "seller",
+    "description": "CA Civil Code §1102 — discloses all known defects and material facts"
+  },
+  {
+    "id": "spq",
+    "label": "Seller Property Questionnaire",
+    "short": "SPQ",
+    "required": true,
+    "applicability": "seller",
+    "description": "Supplements the TDS with detailed property history, permits, and claims"
+  },
+  {
+    "id": "lead_paint",
+    "label": "Lead-Based Paint Disclosure",
+    "short": "Lead Paint",
+    "required": false,
+    "applicability": "pre-1978",
+    "description": "Federal requirement for homes built before 1978"
+  },
+  {
+    "id": "hoa",
+    "label": "HOA / CC&R Addendum",
+    "short": "HOA",
+    "required": false,
+    "applicability": "hoa",
+    "description": "Monthly dues, special assessments, transfer fees, and known violations"
+  },
+  {
+    "id": "buyer_advisory",
+    "label": "Buyer's Advisory",
+    "short": "BA",
+    "required": true,
+    "applicability": "buyer",
+    "description": "CAR Form BA — covers inspections, zoning, schools, insurance, natural hazards"
+  },
+  {
+    "id": "avid",
+    "label": "Agent Visual Inspection Disclosure",
+    "short": "AVID",
+    "required": false,
+    "applicability": "seller",
+    "description": "Documents agent's visual inspection findings for listing"
+  },
+  {
+    "id": "firpta",
+    "label": "FIRPTA Disclosure",
+    "short": "FIRPTA",
+    "required": false,
+    "applicability": "foreign-seller",
+    "description": "Required when seller is a foreign person or entity"
+  },
+  {
+    "id": "rpa",
+    "label": "Residential Purchase Agreement",
+    "short": "RPA",
+    "required": false,
+    "applicability": "transaction",
+    "description": "CAR Form RPA — the primary offer and purchase contract"
+  }
+]

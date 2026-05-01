@@ -25,14 +25,15 @@ interface BriefingItemInsert {
   draftContent?: string;
   draftMedium?: string;
   suggestedAction?: string;
+  contactId?: string;
 }
 
 async function upsertBriefingItems(items: BriefingItemInsert[]): Promise<void> {
   for (const item of items) {
     await query(
       `INSERT INTO briefing_items
-         (tenant_id, type, urgency_score, summary_text, draft_content, draft_medium, suggested_action)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+         (tenant_id, type, urgency_score, summary_text, draft_content, draft_medium, suggested_action, contact_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
       [
         item.tenantId,
         item.type,
@@ -41,12 +42,13 @@ async function upsertBriefingItems(items: BriefingItemInsert[]): Promise<void> {
         item.draftContent ?? null,
         item.draftMedium ?? null,
         item.suggestedAction ?? null,
+        item.contactId ?? null,
       ],
     );
   }
 }
 
-async function generateBriefingForTenant(tenantId: string, llmRouter: LlmRouter): Promise<void> {
+export async function generateBriefingForTenant(tenantId: string, llmRouter: LlmRouter): Promise<void> {
   // Pull preference data for context
   let agentContext = '';
   try {
@@ -58,6 +60,25 @@ async function generateBriefingForTenant(tenantId: string, llmRouter: LlmRouter)
     if (pref) {
       agentContext = `Agent: ${pref.display_name ?? 'Real estate agent'}. Primary market ZIP: ${pref.primary_zip ?? 'not set'}.`;
     }
+  } catch { /* best-effort */ }
+
+  // Pull real contacts to ground items in actual data
+  let contactList = '';
+  try {
+    const contactResult = await query<{
+      contact_id: string; name: string | null;
+      stage: string | null; last_contact_date: string | null;
+    }>(
+      `SELECT contact_id, name, stage, last_contact_date
+       FROM contacts
+       WHERE tenant_id = $1 AND stage NOT IN ('closed','lost')
+       ORDER BY last_contact_date ASC NULLS FIRST
+       LIMIT 10`,
+      [tenantId],
+    );
+    contactList = contactResult.rows
+      .map(c => `  - id:${c.contact_id} | name:${c.name ?? 'Unknown'} | stage:${c.stage ?? 'unknown'} | last_contact:${c.last_contact_date ?? 'never'}`)
+      .join('\n');
   } catch { /* best-effort */ }
 
   // Generate 3–5 briefing items using the LLM as a planner
@@ -73,19 +94,20 @@ async function generateBriefingForTenant(tenantId: string, llmRouter: LlmRouter)
 
 Context: ${agentContext}
 Today is ${today}.
-
-Generate 3–5 realistic, actionable briefing items that a real estate agent would see on a typical morning. Each item should be specific and include a pre-drafted message ready to send.
+${contactList ? `\nKnown active contacts (use these — do NOT invent names):\n${contactList}\n` : ''}
+Generate 3–5 actionable briefing items for this morning. Prioritize items for contacts above (use their real names and contactId). Only generate market_alert or compliance_flag items if there are fewer than 3 contact-based items.
 
 Return a JSON array of objects with these fields:
 - type: one of "follow_up", "deal_deadline", "new_lead", "showing_prep", "compliance_flag", "market_alert"
 - urgencyScore: 1–10 (10 = most urgent)
-- summaryText: one-sentence summary (max 80 chars)
-- draftContent: pre-drafted SMS or email text ready for agent review (2–3 sentences)
+- summaryText: one-sentence summary (max 120 chars), include the contact name if applicable
+- draftContent: pre-drafted SMS or email text ready for agent review (2–3 sentences, use the contact's first name)
 - draftMedium: "sms" or "email"
 - suggestedAction: the action type (e.g., "sms_send", "email_draft", "follow_up")
+- contactId: the contact id from the list above if this item is about a specific contact, otherwise null
 
 Example:
-[{"type":"follow_up","urgencyScore":7,"summaryText":"Sarah Chen — no contact in 6 days","draftContent":"Hi Sarah, just wanted to follow up on the listings we discussed. Are you still interested in the Westside properties? Happy to schedule tours this week!","draftMedium":"sms","suggestedAction":"sms_send"}]
+[{"type":"follow_up","urgencyScore":7,"summaryText":"Sarah Chen — no contact in 6 days","draftContent":"Hi Sarah, just wanted to follow up on the listings we discussed. Are you still interested in the Westside properties? Happy to schedule tours this week!","draftMedium":"sms","suggestedAction":"sms_send","contactId":"contact-uuid-here"}]
 
 Return ONLY the JSON array, no other text.`,
       }],
@@ -107,6 +129,7 @@ Return ONLY the JSON array, no other text.`,
       const parsed = JSON.parse(match[0]) as Array<{
         type?: string; urgencyScore?: number; summaryText?: string;
         draftContent?: string; draftMedium?: string; suggestedAction?: string;
+        contactId?: string | null;
       }>;
       items = parsed
         .filter(p => p.summaryText && p.type)
@@ -114,10 +137,11 @@ Return ONLY the JSON array, no other text.`,
           tenantId,
           type: p.type!,
           urgencyScore: Math.min(10, Math.max(1, p.urgencyScore ?? 3)),
-          summaryText: (p.summaryText ?? '').slice(0, 80),
+          summaryText: (p.summaryText ?? '').slice(0, 120),
           draftContent: p.draftContent,
           draftMedium: p.draftMedium,
           suggestedAction: p.suggestedAction,
+          contactId: p.contactId ?? undefined,
         }));
     }
   } catch (err) {

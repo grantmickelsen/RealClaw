@@ -92,14 +92,14 @@ export class OAuthHandler {
     return this.parseTokenResponse(data);
   }
 
-  /** Store tokens in the vault */
-  async storeTokens(integrationId: IntegrationId, tokens: TokenSet): Promise<void> {
-    await this.vault.store(integrationId, 'access_token', tokens.accessToken);
+  /** Store tokens in the vault, optionally namespaced under tenantId */
+  async storeTokens(integrationId: IntegrationId, tokens: TokenSet, tenantId?: string): Promise<void> {
+    await this.vault.store(integrationId, 'access_token', tokens.accessToken, tenantId);
     if (tokens.refreshToken) {
-      await this.vault.store(integrationId, 'refresh_token', tokens.refreshToken);
+      await this.vault.store(integrationId, 'refresh_token', tokens.refreshToken, tenantId);
     }
     if (tokens.expiresAt) {
-      await this.vault.store(integrationId, 'expires_at', tokens.expiresAt);
+      await this.vault.store(integrationId, 'expires_at', tokens.expiresAt, tenantId);
     }
   }
 
@@ -107,9 +107,10 @@ export class OAuthHandler {
   async getValidAccessToken(
     integrationId: IntegrationId,
     config: OAuthConfig,
+    tenantId?: string,
   ): Promise<string> {
-    const expiresAt = await this.vault.retrieve(integrationId, 'expires_at');
-    const accessToken = await this.vault.retrieve(integrationId, 'access_token');
+    const expiresAt = await this.vault.retrieve(integrationId, 'expires_at', tenantId);
+    const accessToken = await this.vault.retrieve(integrationId, 'access_token', tenantId);
 
     if (!accessToken) {
       throw new Error(`No access token stored for ${integrationId}`);
@@ -119,12 +120,12 @@ export class OAuthHandler {
     if (expiresAt) {
       const expiryMs = new Date(expiresAt).getTime();
       if (Date.now() > expiryMs - 300_000) {
-        const refreshToken = await this.vault.retrieve(integrationId, 'refresh_token');
+        const refreshToken = await this.vault.retrieve(integrationId, 'refresh_token', tenantId);
         if (!refreshToken) {
           throw new Error(`Access token expired and no refresh token for ${integrationId}`);
         }
         const newTokens = await this.refreshToken(config, refreshToken);
-        await this.storeTokens(integrationId, newTokens);
+        await this.storeTokens(integrationId, newTokens, tenantId);
         return newTokens.accessToken;
       }
     }
