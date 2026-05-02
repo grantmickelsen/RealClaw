@@ -33,8 +33,9 @@ export class Synthesizer {
     }
 
     // Multiple results — synthesize with LLM (streaming if onToken provided)
+    const MAX_RESULT_CHARS = 500;
     const summaries = results
-      .map((r, _i) => `Agent ${r.fromAgent} (${r.status}): ${this.extractText(r)}`)
+      .map(r => `Agent ${r.fromAgent} (${r.status}): ${this.extractText(r).slice(0, MAX_RESULT_CHARS)}`)
       .join('\n\n');
 
     const prompt = `Original request: "${originalMessage.content.text}"

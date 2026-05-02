@@ -194,18 +194,19 @@ export async function ingestGmailForTenant(
     return;
   }
 
-  // Load known contact emails once for the whole batch
-  const contactRows = await query<{ email: string }>(
-    'SELECT email FROM contacts WHERE tenant_id = $1 AND email IS NOT NULL AND email <> \'\'',
+  // Load known contact emails and IDs once for the whole batch
+  const contactRows = await query<{ email: string; id: string }>(
+    'SELECT email, id FROM contacts WHERE tenant_id = $1 AND email IS NOT NULL AND email <> \'\'',
     [tenantId],
   );
   const knownEmails = new Set(contactRows.rows.map(r => r.email.toLowerCase()));
+  const contactByEmail = new Map(contactRows.rows.map(r => [r.email.toLowerCase(), r.id]));
 
   log.info(`[GmailIngest:${tenantId}] Processing ${messageIds.size} new message(s)`);
 
   for (const messageId of messageIds) {
     try {
-      await processMessage(tenantId, messageId, accessToken, knownEmails, vault, dispatchEmailIngest);
+      await processMessage(tenantId, messageId, accessToken, knownEmails, contactByEmail, vault, dispatchEmailIngest);
     } catch (err) {
       log.error(`[GmailIngest:${tenantId}] Failed to process message ${messageId}`, { error: (err as Error).message });
     }
@@ -220,6 +221,7 @@ async function processMessage(
   messageId: string,
   accessToken: string,
   knownEmails: Set<string>,
+  contactByEmail: Map<string, string>,
   vault: CredentialVault,
   dispatchEmailIngest: (tenantId: string, emailRow: Record<string, unknown>) => Promise<void>,
 ): Promise<void> {
@@ -274,15 +276,8 @@ async function processMessage(
   const rawText = extractPlainText(fullMsg.payload);
   const bodyText = rawText.slice(0, 2000).trim() || null;
 
-  // Match against contacts
-  let contactId: string | null = null;
-  try {
-    const contactRow = await query<{ id: string }>(
-      'SELECT id FROM contacts WHERE tenant_id = $1 AND LOWER(email) = LOWER($2) LIMIT 1',
-      [tenantId, fromAddress],
-    );
-    contactId = contactRow.rows[0]?.id ?? null;
-  } catch { /* no contact match — that's fine */ }
+  // Match against pre-loaded contact map (avoids per-message DB round-trip)
+  const contactId: string | null = contactByEmail.get(fromAddress.toLowerCase()) ?? null;
 
   await query(
     `INSERT INTO inbound_emails

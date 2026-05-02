@@ -30,17 +30,22 @@ export const DEFAULT_AUTO_APPROVAL_SETTINGS: AutoApprovalSettings = {
   send_document: 'require',
 };
 
+export type AiDisclosureMode = 'footer' | 'none';
+
 export interface PreferencesState {
   status: 'loading' | 'loaded';
   primaryZip: string | null;
   displayName: string | null;
   brokerage: string | null;
+  brokerageAddress: string | null;
+  licenseNumber: string | null;
   phone: string | null;
   llmTier: 'fast' | 'balanced' | 'best';
   tonePrefs: TonePrefs;
   toneAnalyzedAt: string | null;
   onboardingDone: boolean;
   autoApprovalSettings: AutoApprovalSettings;
+  aiDisclosureMode: AiDisclosureMode;
   setPreferences(prefs: Partial<Omit<PreferencesState, 'setPreferences' | 'clear'>>): void;
   clear(): void;
 }
@@ -50,23 +55,29 @@ export const usePreferencesStore = create<PreferencesState>(set => ({
   primaryZip: null,
   displayName: null,
   brokerage: null,
+  brokerageAddress: null,
+  licenseNumber: null,
   phone: null,
   llmTier: 'balanced',
   tonePrefs: {},
   toneAnalyzedAt: null,
   onboardingDone: false,
   autoApprovalSettings: { ...DEFAULT_AUTO_APPROVAL_SETTINGS },
+  aiDisclosureMode: 'footer',
   setPreferences: prefs => set(state => ({ ...state, ...prefs })),
   clear: () => set({
     status: 'loading',
     primaryZip: null,
     displayName: null,
     brokerage: null,
+    brokerageAddress: null,
+    licenseNumber: null,
     phone: null,
     llmTier: 'balanced',
     tonePrefs: {},
     toneAnalyzedAt: null,
     onboardingDone: false,
     autoApprovalSettings: { ...DEFAULT_AUTO_APPROVAL_SETTINGS },
+    aiDisclosureMode: 'footer',
   }),
 }));

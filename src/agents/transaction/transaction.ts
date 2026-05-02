@@ -193,7 +193,7 @@ export class TransactionAgent extends BaseAgent {
           try {
             const raw = await this.ask(
               `${INGEST_SYSTEM_PROMPT}\n\nContract text:\n${sanitizedContract}`,
-              ModelTier.POWERFUL,
+              ModelTier.BALANCED,
             );
             const jsonMatch = raw.match(/\{[\s\S]*\}/);
             extracted = JSON.parse(jsonMatch?.[0] ?? raw) as Record<string, unknown>;

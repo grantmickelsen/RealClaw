@@ -13,6 +13,7 @@
  * The actual ingest work is dispatched to the BullMQ `claw_gmail-ingest` queue.
  */
 
+import crypto from 'crypto';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { Queue, type ConnectionOptions } from 'bullmq';
 import { query } from '../db/postgres.js';
@@ -131,8 +132,16 @@ export async function handleGmailWebhook(
 
   const jwtClaims = await verifyGoogleJwt(bearerToken);
   if (!jwtClaims) {
-    // In mock mode (dev only), skip JWT verification
-    if (process.env.GMAIL_MOCK_MODE !== 'true') {
+    // In dev, allow a secret-header bypass instead of open access.
+    // This prevents unauthenticated webhook injection in all environments.
+    const mockSecret = process.env.GMAIL_WEBHOOK_DEV_SECRET;
+    const providedSecret = req.headers['x-webhook-dev-secret'] as string | undefined;
+    const mockAllowed =
+      process.env.NODE_ENV !== 'production' &&
+      mockSecret &&
+      providedSecret &&
+      crypto.timingSafeEqual(Buffer.from(providedSecret), Buffer.from(mockSecret));
+    if (!mockAllowed) {
       res.writeHead(401); res.end();
       return;
     }

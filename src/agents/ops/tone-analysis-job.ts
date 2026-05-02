@@ -210,7 +210,7 @@ export async function analyzeToneForTenant(
   log.info(`[ToneAnalysis:${tenantId}] Calling LLM with ${assembled.length} chars of email content`);
 
   const response = await llmRouter.complete({
-    model: ModelTier.POWERFUL,
+    model: ModelTier.BALANCED,
     systemPrompt: SYSTEM_PROMPT,
     messages: [{ role: 'user', content: assembled.trim() }],
     maxOutputTokens: 1024,

@@ -145,7 +145,8 @@ export type QueryType =
   | 'schedule_check'
   | 'market_data'
   | 'disclosure_status'
-  | 'vendor_lookup';
+  | 'vendor_lookup'
+  | 'contact_flags';
 
 export interface QueryResponse extends BaseMessage {
   type: 'QUERY_RESPONSE';

@@ -74,8 +74,10 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
 
   async loadSubscription() {
     set({ loading: true });
+    let backendLoaded = false;
+    let backendStatus: SubscriptionStatus | null = null;
+
     try {
-      // Fetch from backend
       const res = await authedFetch('/v1/subscription');
       if (res.ok) {
         const data = (await res.json()) as SubscriptionResponse;
@@ -89,20 +91,28 @@ export const useSubscriptionStore = create<SubscriptionState>((set, get) => ({
           isProfessional: isPro,
           loading: false,
         });
+        backendLoaded = true;
+        backendStatus = data.status;
       }
     } catch {
-      // Network error — leave existing state, optimistic professional during trial
+      // Network error — leave existing state
     } finally {
       set({ loading: false });
     }
 
-    // Cross-check with RevenueCat SDK for local entitlement verification
+    // Cross-check with RevenueCat SDK.
+    // RC is used to grant access when the backend fails (e.g. network error).
+    // RC is NOT used to override a definitive backend cancellation — doing so
+    // would allow cancelled users to retain access during the SDK cache window.
     const info = await getCustomerInfo();
     if (info && hasProfessionalEntitlement(info)) {
-      // RC says active — ensure we don't show a gate due to stale backend state
-      set(s => ({
-        isProfessional: s.isProfessional || deriveIsProfessional('professional', 'active', s.devTierOverride),
-      }));
+      const definitivelyInactive = backendLoaded &&
+        (backendStatus === 'cancelled' || backendStatus === 'paused');
+      if (!definitivelyInactive) {
+        set(s => ({
+          isProfessional: s.isProfessional || deriveIsProfessional('professional', 'active', s.devTierOverride),
+        }));
+      }
     }
   },
 

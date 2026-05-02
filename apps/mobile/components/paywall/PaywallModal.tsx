@@ -15,6 +15,7 @@ import BottomSheet, { BottomSheetView } from '@gorhom/bottom-sheet';
 import { Ionicons } from '@expo/vector-icons';
 import { getOfferings, purchasePackage, restorePurchases } from '../../lib/purchases';
 import { useSubscriptionStore } from '../../store/subscription';
+import { PurchasesErrorCode } from 'react-native-purchases';
 import type { PurchasesPackage } from 'react-native-purchases';
 
 // ─── Feature list shown in paywall ─────────────────────────────────────────���─
@@ -77,8 +78,8 @@ export function PaywallModal({ visible, onClose, contextTitle }: Props) {
       await syncAfterPurchase();
       onClose();
     } catch (err: unknown) {
-      const code = (err as { code?: string }).code;
-      if (code !== 'PURCHASE_CANCELLED') {
+      const code = (err as { code?: number }).code;
+      if (code !== PurchasesErrorCode.purchaseCancelledError) {
         Alert.alert('Purchase Failed', 'Please try again or contact support.');
       }
     } finally {

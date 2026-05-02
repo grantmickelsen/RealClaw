@@ -29,23 +29,24 @@ interface BriefingItemInsert {
 }
 
 async function upsertBriefingItems(items: BriefingItemInsert[]): Promise<void> {
-  for (const item of items) {
-    await query(
-      `INSERT INTO briefing_items
-         (tenant_id, type, urgency_score, summary_text, draft_content, draft_medium, suggested_action, contact_id)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
-      [
-        item.tenantId,
-        item.type,
-        item.urgencyScore,
-        item.summaryText,
-        item.draftContent ?? null,
-        item.draftMedium ?? null,
-        item.suggestedAction ?? null,
-        item.contactId ?? null,
-      ],
-    );
-  }
+  if (items.length === 0) return;
+  await query(
+    `INSERT INTO briefing_items
+       (tenant_id, type, urgency_score, summary_text, draft_content, draft_medium, suggested_action, contact_id)
+     SELECT * FROM UNNEST(
+       $1::text[], $2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]
+     )`,
+    [
+      items.map(i => i.tenantId),
+      items.map(i => i.type),
+      items.map(i => i.urgencyScore),
+      items.map(i => i.summaryText),
+      items.map(i => i.draftContent ?? null),
+      items.map(i => i.draftMedium ?? null),
+      items.map(i => i.suggestedAction ?? null),
+      items.map(i => i.contactId ?? null),
+    ],
+  );
 }
 
 export async function generateBriefingForTenant(tenantId: string, llmRouter: LlmRouter): Promise<void> {

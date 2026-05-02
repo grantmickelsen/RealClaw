@@ -13,7 +13,7 @@ import { WS_URL } from '../constants/api';
 
 let socket: WebSocket | null = null;
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-const RECONNECT_DELAY_MS = 3_000;
+let reconnectAttempts = 0;
 
 // ─── Streaming ref buffer — 80ms flush (Decision 5) ───
 const streamBuffers = new Map<string, string>(); // correlationId → accumulated text
@@ -50,6 +50,7 @@ export function connect(): void {
   socket = new WebSocket(WS_URL, [`bearer.${accessToken}`]);
 
   socket.onopen = () => {
+    reconnectAttempts = 0;
     setStatus('connected');
     setSocket(socket);
     startFlushInterval();
@@ -76,9 +77,11 @@ export function connect(): void {
     setSocket(null);
     stopFlushInterval();
     socket = null;
-    // Reconnect after delay if still authenticated
+    // Reconnect with jittered exponential backoff if still authenticated
     if (useAuthStore.getState().status === 'authenticated') {
-      reconnectTimer = setTimeout(connect, RECONNECT_DELAY_MS);
+      const delay = Math.min(30_000, 1_000 * 2 ** reconnectAttempts) * (0.5 + Math.random() * 0.5);
+      reconnectAttempts++;
+      reconnectTimer = setTimeout(connect, delay);
     }
   };
 }

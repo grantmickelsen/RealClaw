@@ -4,6 +4,8 @@ import { AgentId, ModelTier } from '../../types/agents.js';
 import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSection } from '../../types/messages.js';
 
 export class CommsAgent extends BaseAgent {
+  private static readonly toneModelCache = new Map<string, { value: string; expiresAt: number }>();
+
   async handleTask(request: TaskRequest): Promise<TaskResult> {
     const start = Date.now();
     const toneModel = await this.getToneModel();
@@ -13,6 +15,16 @@ export class CommsAgent extends BaseAgent {
         case 'draft_email':
         case 'reply_to': {
           const contactId = request.context.contactId ?? 'unknown';
+
+          // Consent gate — block draft if contact has opted out
+          const consent = await this.getContactConsent(contactId);
+          if (consent.doNotContact) {
+            return this.successResult(request, { text: '⚠ This contact has opted out of all communications. No draft created.' }, { processingMs: Date.now() - start });
+          }
+          if (consent.emailUnsubscribed) {
+            return this.successResult(request, { text: '⚠ This contact has unsubscribed from email. No draft created.' }, { processingMs: Date.now() - start });
+          }
+
           const contextData = await this.getContactContext(contactId);
           const complianceOk = await this.checkCompliance(request.instructions);
 
@@ -22,10 +34,11 @@ export class CommsAgent extends BaseAgent {
             }, { processingMs: Date.now() - start });
           }
 
-          const draft = await this.ask(
+          const rawDraft = await this.ask(
             `Draft a professional email for the following request:\n\n${request.instructions}\n\nContact context:\n${contextData}\n\nTone guide:\n${toneModel}`,
             ModelTier.BALANCED,
           );
+          const draft = await this.appendEmailFooter(rawDraft);
 
           return this.successResult(request, {
             draft,
@@ -309,7 +322,48 @@ Return ONLY the JSON object.`,
     }
   }
 
+  private async getContactConsent(contactId: string): Promise<{ doNotContact: boolean; emailUnsubscribed: boolean }> {
+    if (!contactId || contactId === 'unknown') return { doNotContact: false, emailUnsubscribed: false };
+    try {
+      const q: AgentQuery = {
+        messageId: uuidv4(),
+        timestamp: new Date().toISOString(),
+        correlationId: uuidv4(),
+        type: 'AGENT_QUERY',
+        fromAgent: this.id,
+        toAgent: AgentId.RELATIONSHIP,
+        queryType: 'contact_flags',
+        parameters: { contactId },
+        urgency: 'blocking',
+      };
+      const resp = await this.queryAgent(AgentId.RELATIONSHIP, q);
+      return {
+        doNotContact: resp.found ? (resp.data['do_not_contact'] as boolean ?? false) : false,
+        emailUnsubscribed: resp.found ? (resp.data['email_unsubscribed'] as boolean ?? false) : false,
+      };
+    } catch {
+      return { doNotContact: false, emailUnsubscribed: false };
+    }
+  }
+
+  private async appendEmailFooter(body: string): Promise<string> {
+    const footer = await this.getEmailFooter();
+    return footer ? `${body}\n\n${footer}` : body;
+  }
+
+  private async getEmailFooter(): Promise<string> {
+    try {
+      const f = await this.readMemory({ path: 'client-profile/footer.md' });
+      if (f.content.trim()) return f.content.trim();
+    } catch { /* footer not configured yet */ }
+    return '';
+  }
+
   private async getToneModel(): Promise<string> {
+    const tenantId = this.tenantId;
+    const cached = CommsAgent.toneModelCache.get(tenantId);
+    if (cached && Date.now() < cached.expiresAt) return cached.value;
+
     const sections: string[] = [];
 
     // Structured preferences from onboarding (salutation, formality, emoji, writing sample)
@@ -324,8 +378,11 @@ Return ONLY the JSON object.`,
       if (analyzed.content.trim()) sections.push(`## Style Analysis (from sent emails)\n\n${analyzed.content.trim()}`);
     } catch { /* not yet analyzed */ }
 
-    return sections.length > 0
+    const result = sections.length > 0
       ? sections.join('\n\n---\n\n')
       : 'Professional, warm, first-name basis. Concise sentences.';
+
+    CommsAgent.toneModelCache.set(tenantId, { value: result, expiresAt: Date.now() + 60 * 60 * 1000 });
+    return result;
   }
 }

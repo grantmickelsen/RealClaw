@@ -55,6 +55,7 @@ export function verifyJwt(authHeader: string | undefined): AuthContext {
   let payload: jwt.JwtPayload;
   try {
     payload = jwt.verify(token, secret, {
+      algorithms: ['HS256'],
       issuer: process.env.JWT_ISSUER ?? 'realclaw',
     }) as jwt.JwtPayload;
   } catch (err) {

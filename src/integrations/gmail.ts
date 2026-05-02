@@ -162,10 +162,16 @@ export class GmailIntegration extends BaseIntegration {
   }
 
   private buildRfc822(to: string[], subject: string, body: string, cc: string[] = []): string {
+    // Strip CR/LF from all header values to prevent email header injection.
+    // An attacker who can place \r\n into a contact's email address or into the
+    // LLM-generated subject could inject arbitrary headers (e.g. BCC).
+    const sanitizeHeader = (s: string) => s.replace(/[\r\n]+/g, ' ').trim();
+    const toHeader = to.map(sanitizeHeader).join(', ');
+    const ccHeader = cc.map(sanitizeHeader).join(', ');
     const lines = [
-      `To: ${to.join(', ')}`,
-      ...(cc.length > 0 ? [`Cc: ${cc.join(', ')}`] : []),
-      `Subject: ${subject}`,
+      `To: ${toHeader}`,
+      ...(cc.length > 0 ? [`Cc: ${ccHeader}`] : []),
+      `Subject: ${sanitizeHeader(subject)}`,
       'MIME-Version: 1.0',
       'Content-Type: text/plain; charset=utf-8',
       '',

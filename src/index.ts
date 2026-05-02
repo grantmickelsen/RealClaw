@@ -6,6 +6,7 @@
  */
 
 import 'dotenv/config';
+import crypto from 'crypto';
 import http from 'http';
 import fs from 'fs/promises';
 import path from 'path';
@@ -24,7 +25,9 @@ import { AuditLogger } from './middleware/audit-logger.js';
 import { HeartbeatScheduler } from './agents/ops/heartbeat.js';
 import { BullMqHeartbeatScheduler, parseRedisUrl } from './agents/ops/bullmq-heartbeat.js';
 import { registerBriefingJob, generateBriefingForTenant } from './agents/ops/briefing-job.js';
+import { registerEmailPurgeJob } from './agents/ops/email-purge-job.js';
 import { registerDealDeadlineMonitorJob } from './agents/ops/deal-deadline-monitor-job.js';
+import { registerTrialExpiryJob } from './agents/ops/trial-expiry-job.js';
 import { registerGmailIngestWorker } from './agents/ops/gmail-ingest-job.js';
 import { registerGmailWatchJob } from './agents/ops/gmail-watch-job.js';
 import { createToneAnalysisQueue, getToneAnalysisQueue, registerToneAnalysisWorker } from './agents/ops/tone-analysis-job.js';
@@ -345,10 +348,21 @@ const AUTH_WINDOW_MS = 900_000;
 const AUTH_MAX_ATTEMPTS = 20;
 const authAttemptStore = new Map<string, number[]>();
 
+function getClientIp(req: http.IncomingMessage): string {
+  // Only trust X-Forwarded-For when the connection is from a known proxy address.
+  // Trusting it unconditionally allows any client to spoof their IP and bypass rate limits.
+  const remoteAddr = req.socket?.remoteAddress ?? '';
+  const trustedProxies = (process.env.TRUSTED_PROXY_CIDRS ?? '').split(',').map(s => s.trim()).filter(Boolean);
+  const isTrustedProxy = trustedProxies.length > 0 && trustedProxies.some(cidr => remoteAddr.startsWith(cidr.split('/')[0]!));
+  if (isTrustedProxy) {
+    const forwarded = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim();
+    if (forwarded) return forwarded;
+  }
+  return remoteAddr || 'unknown';
+}
+
 function checkAuthRateLimit(req: http.IncomingMessage): boolean {
-  const ip = (req.headers['x-forwarded-for'] as string | undefined)?.split(',')[0]?.trim()
-    ?? req.socket?.remoteAddress
-    ?? 'unknown';
+  const ip = getClientIp(req);
   const now = Date.now();
   const recent = (authAttemptStore.get(ip) ?? []).filter(t => now - t < AUTH_WINDOW_MS);
   if (recent.length >= AUTH_MAX_ATTEMPTS) return false;
@@ -361,6 +375,40 @@ function checkAuthRateLimit(req: http.IncomingMessage): boolean {
     }
   }
   return true;
+}
+
+// ─── Twilio webhook HMAC-SHA1 signature validation ────────────────────────────
+// Twilio signs every webhook with HMAC-SHA1(authToken, url + sorted_params).
+// Without this check any party can POST to the webhook and inject arbitrary SMS data.
+function validateTwilioSignature(
+  req: http.IncomingMessage,
+  rawBody: string,
+): boolean {
+  const authToken = process.env.CLAW_TWILIO_AUTH_TOKEN;
+  const baseUrl = process.env.CLAW_WEBHOOK_BASE_URL;
+  if (!authToken || !baseUrl) {
+    // If unconfigured in dev, skip validation with a warning rather than breaking.
+    if (process.env.NODE_ENV === 'production') {
+      log.error('[Twilio] CLAW_TWILIO_AUTH_TOKEN or CLAW_WEBHOOK_BASE_URL not set — rejecting webhook in production');
+      return false;
+    }
+    log.warn('[Twilio] Webhook signature validation disabled — set CLAW_TWILIO_AUTH_TOKEN and CLAW_WEBHOOK_BASE_URL in production');
+    return true;
+  }
+
+  const signature = req.headers['x-twilio-signature'] as string | undefined;
+  if (!signature) return false;
+
+  // Build the string Twilio signed: url + alphabetically sorted param key+value pairs
+  const webhookUrl = `${baseUrl}${req.url ?? ''}`;
+  const params = new URLSearchParams(rawBody);
+  const sortedParams = [...params.entries()].sort(([a], [b]) => a.localeCompare(b));
+  const toSign = webhookUrl + sortedParams.map(([k, v]) => k + v).join('');
+
+  const expected = crypto.createHmac('sha1', authToken).update(toSign).digest('base64');
+  const expectedBuf = Buffer.from(expected, 'utf8');
+  const providedBuf = Buffer.from(signature, 'utf8');
+  return expectedBuf.length === providedBuf.length && crypto.timingSafeEqual(expectedBuf, providedBuf);
 }
 
 const FORMALITY_LABELS = ['Casual', 'Warm', 'Balanced', 'Professional', 'Formal'];
@@ -470,6 +518,26 @@ async function bootstrap(): Promise<void> {
     dealJobCleanup = async () => {
       await dw.close();
       await dq.close();
+    };
+  }
+
+  // ─── Trial expiry job (BullMQ, daily at 8 AM UTC) ────────────────────────
+  let trialExpiryCleanup: (() => Promise<void>) | undefined;
+  if (bullMqConnection && dbAvailable) {
+    const { queue: teq, worker: tew } = registerTrialExpiryJob(bullMqConnection);
+    trialExpiryCleanup = async () => {
+      await tew.close();
+      await teq.close();
+    };
+  }
+
+  // ─── Email body purge job (BullMQ, daily at 3 AM UTC — GDPR Art. 5(1)(e)) ──
+  let emailPurgeCleanup: (() => Promise<void>) | undefined;
+  if (bullMqConnection && dbAvailable) {
+    const { queue: epq, worker: epw } = registerEmailPurgeJob(bullMqConnection);
+    emailPurgeCleanup = async () => {
+      await epw.close();
+      await epq.close();
     };
   }
 
@@ -860,14 +928,17 @@ async function bootstrap(): Promise<void> {
         primary_zip: string | null;
         display_name: string | null;
         brokerage: string | null;
+        brokerage_address: string | null;
+        license_number: string | null;
         phone: string | null;
         llm_tier: string;
         tone_prefs: Record<string, unknown>;
         onboarding_done: boolean;
         tone_analyzed_at: string | null;
         auto_approval_settings: Record<string, string>;
+        ai_disclosure_mode: string;
       }>(
-        'SELECT primary_zip, display_name, brokerage, phone, llm_tier, tone_prefs, onboarding_done, tone_analyzed_at, auto_approval_settings FROM tenants WHERE tenant_id = $1',
+        'SELECT primary_zip, display_name, brokerage, brokerage_address, license_number, phone, llm_tier, tone_prefs, onboarding_done, tone_analyzed_at, auto_approval_settings, ai_disclosure_mode FROM tenants WHERE tenant_id = $1',
         [auth.tenantId],
       );
       const t = row.rows[0];
@@ -875,12 +946,15 @@ async function bootstrap(): Promise<void> {
         primaryZip: t?.primary_zip ?? null,
         displayName: t?.display_name ?? null,
         brokerage: t?.brokerage ?? null,
+        brokerageAddress: t?.brokerage_address ?? null,
+        licenseNumber: t?.license_number ?? null,
         phone: t?.phone ?? null,
         llmTier: t?.llm_tier ?? 'balanced',
         tonePrefs: t?.tone_prefs ?? {},
         onboardingDone: t?.onboarding_done ?? false,
         toneAnalyzedAt: t?.tone_analyzed_at ?? null,
         autoApprovalSettings: t?.auto_approval_settings ?? {},
+        aiDisclosureMode: t?.ai_disclosure_mode ?? 'footer',
       });
       return;
     }
@@ -910,11 +984,14 @@ async function bootstrap(): Promise<void> {
         primaryZip?: string;
         displayName?: string;
         brokerage?: string;
+        brokerageAddress?: string;
+        licenseNumber?: string;
         phone?: string;
         llmTier?: string;
         tonePrefs?: Record<string, unknown>;
         onboardingDone?: boolean;
         autoApprovalSettings?: Record<string, string>;
+        aiDisclosureMode?: string;
       };
       if (updates.primaryZip !== undefined && !/^\d{5}$/.test(updates.primaryZip)) {
         sendJson(res, 400, { ok: false, error: 'primaryZip must be a 5-digit ZIP code' });
@@ -931,11 +1008,14 @@ async function bootstrap(): Promise<void> {
         primaryZip: 'primary_zip',
         displayName: 'display_name',
         brokerage: 'brokerage',
+        brokerageAddress: 'brokerage_address',
+        licenseNumber: 'license_number',
         phone: 'phone',
         llmTier: 'llm_tier',
         tonePrefs: 'tone_prefs',
         onboardingDone: 'onboarding_done',
         autoApprovalSettings: 'auto_approval_settings',
+        aiDisclosureMode: 'ai_disclosure_mode',
       };
       for (const [jsKey, dbCol] of Object.entries(fieldMap)) {
         if (jsKey in updates) {
@@ -961,6 +1041,29 @@ async function bootstrap(): Promise<void> {
           await fs.writeFile(tonePrefsPath, buildTonePrefsMarkdown(updates.tonePrefs), 'utf-8');
         } catch { /* non-critical */ }
       }
+      // Write footer.md whenever brokerage identity fields change — CommsAgent + ContentAgent read this
+      if (updates.brokerageAddress !== undefined || updates.licenseNumber !== undefined || updates.aiDisclosureMode !== undefined) {
+        try {
+          const memPath = process.env.CLAW_MEMORY_PATH ?? path.resolve('./memory');
+          const footerPath = path.join(memPath, auth.tenantId, 'client-profile', 'footer.md');
+          await fs.mkdir(path.dirname(footerPath), { recursive: true });
+          // Re-read the full row to build the footer (fields may have been partial updates)
+          const footerRow = await query<{ brokerage: string | null; brokerage_address: string | null; license_number: string | null; ai_disclosure_mode: string }>(
+            'SELECT brokerage, brokerage_address, license_number, ai_disclosure_mode FROM tenants WHERE tenant_id = $1',
+            [auth.tenantId],
+          );
+          const ft = footerRow.rows[0];
+          if (ft) {
+            const lines: string[] = [];
+            if (ft.brokerage) lines.push(ft.brokerage);
+            if (ft.license_number) lines.push(`License #${ft.license_number}`);
+            if (ft.brokerage_address) lines.push(ft.brokerage_address);
+            if (ft.ai_disclosure_mode !== 'none') lines.push('Drafted with AI assistance');
+            await fs.writeFile(footerPath, lines.join(' | '), 'utf-8');
+          }
+        } catch { /* non-critical */ }
+      }
+
       // Push auto-approval settings to coordinator so behavior changes immediately (no restart needed)
       if (updates.autoApprovalSettings) {
         try {
@@ -969,6 +1072,130 @@ async function bootstrap(): Promise<void> {
         } catch { /* non-critical */ }
       }
       sendJson(res, 200, { ok: true });
+      return;
+    }
+
+    // ─── GET /v1/unsubscribe — unauthenticated email opt-out (linked from email footer) ───
+    // CAN-SPAM requires a working unsubscribe mechanism honored within 10 business days.
+    if (req.method === 'GET' && url.pathname === '/v1/unsubscribe') {
+      const tenantId = url.searchParams.get('t');
+      const contactId = url.searchParams.get('c');
+      if (!tenantId || !contactId || !dbAvailable) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' }); res.end('Invalid unsubscribe link.'); return;
+      }
+      try {
+        await query(
+          `UPDATE contacts SET email_unsubscribed = true, email_unsubscribed_at = NOW()
+           WHERE tenant_id = $1 AND id = $2`,
+          [tenantId, contactId],
+        );
+        res.writeHead(200, { 'Content-Type': 'text/html' });
+        res.end('<!DOCTYPE html><html><body style="font-family:sans-serif;padding:2rem"><h2>Unsubscribed</h2><p>You have been removed from this agent\'s email list.</p></body></html>');
+      } catch {
+        res.writeHead(500, { 'Content-Type': 'text/plain' }); res.end('Could not process request. Please try again.');
+      }
+      return;
+    }
+
+    // ─── DELETE /v1/account (JWT required) — full tenant data deletion (GDPR Art. 17) ──
+    if (req.method === 'DELETE' && url.pathname === '/v1/account') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      let delBody: string;
+      try { delBody = await readBodySafe(req); }
+      catch { sendJson(res, 400, { ok: false, error: 'Failed to read request body' }); return; }
+      const { confirm } = JSON.parse(delBody) as { confirm?: string };
+      if (confirm !== 'DELETE MY ACCOUNT') {
+        sendJson(res, 400, { ok: false, error: 'Send { "confirm": "DELETE MY ACCOUNT" } to confirm account deletion' });
+        return;
+      }
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
+      try {
+        // ON DELETE CASCADE in schema propagates to all tenant data
+        await query('DELETE FROM tenants WHERE tenant_id = $1', [auth.tenantId]);
+        // Also purge encrypted credential files from vault
+        try {
+          const vaultBase = process.env.CLAW_VAULT_PATH ?? path.resolve('./credentials');
+          const tenantVault = path.join(vaultBase, auth.tenantId);
+          await fs.rm(tenantVault, { recursive: true, force: true });
+        } catch { /* best-effort */ }
+        const memPath = process.env.CLAW_MEMORY_PATH ?? path.resolve('./memory');
+        await fs.rm(path.join(memPath, auth.tenantId), { recursive: true, force: true }).catch(() => {});
+        sendJson(res, 200, { ok: true, message: 'Account and all associated data permanently deleted.' });
+      } catch (err) {
+        log.error('[DELETE /v1/account] Failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Account deletion failed' });
+      }
+      return;
+    }
+
+    // ─── GET /v1/export (JWT required) — GDPR Art. 20 / CCPA data portability ──────────
+    if (req.method === 'GET' && url.pathname === '/v1/export') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
+      try {
+        const [tenantRow, contactsRow, smsRow, dealsRow, briefingRow] = await Promise.all([
+          query<Record<string, unknown>>(
+            'SELECT display_name, brokerage, primary_zip, phone, created_at FROM tenants WHERE tenant_id = $1',
+            [auth.tenantId],
+          ),
+          query<Record<string, unknown>>(
+            'SELECT id, name, email, phone, stage, source, budget, desired_location, notes, created_at FROM contacts WHERE tenant_id = $1 ORDER BY created_at',
+            [auth.tenantId],
+          ),
+          query<Record<string, unknown>>(
+            'SELECT from_number, to_number, body, direction, sent_at FROM sms_messages WHERE tenant_id = $1 ORDER BY sent_at',
+            [auth.tenantId],
+          ),
+          query<Record<string, unknown>>(
+            'SELECT address, deal_type, stage, purchase_price, closing_date, buyer_name, seller_name, created_at FROM deals WHERE tenant_id = $1 ORDER BY created_at',
+            [auth.tenantId],
+          ),
+          query<Record<string, unknown>>(
+            'SELECT type, summary_text, urgency_score, created_at FROM briefing_items WHERE tenant_id = $1 ORDER BY created_at',
+            [auth.tenantId],
+          ),
+        ]);
+        res.writeHead(200, {
+          'Content-Type': 'application/json',
+          'Content-Disposition': 'attachment; filename="realclaw-export.json"',
+        });
+        res.end(JSON.stringify({
+          exportedAt: new Date().toISOString(),
+          tenant: tenantRow.rows[0] ?? {},
+          contacts: contactsRow.rows,
+          smsMessages: smsRow.rows,
+          deals: dealsRow.rows,
+          briefingItems: briefingRow.rows,
+        }, null, 2));
+      } catch (err) {
+        log.error('[GET /v1/export] Failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Export failed' });
+      }
+      return;
+    }
+
+    // ─── PATCH /v1/contacts/:id/do-not-contact (JWT required) ──────────────────
+    if (req.method === 'PATCH' && /^\/v1\/contacts\/[^/]+\/do-not-contact$/.test(url.pathname)) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      const contactId = url.pathname.split('/')[3]!;
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
+      try {
+        const result = await query(
+          `UPDATE contacts SET do_not_contact = true, do_not_contact_at = NOW()
+           WHERE tenant_id = $1 AND id = $2`,
+          [auth.tenantId, contactId],
+        );
+        if (result.rowCount === 0) { sendJson(res, 404, { ok: false, error: 'Contact not found' }); return; }
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        sendJson(res, 500, { ok: false, error: String(err) });
+      }
       return;
     }
 
@@ -1103,9 +1330,11 @@ async function bootstrap(): Promise<void> {
         return;
       }
       if (!dbAvailable) {
-        sendJson(res, 200, { contacts: [] });
+        sendJson(res, 200, { contacts: [], total: 0, offset: 0, limit: 50 });
         return;
       }
+      const cLimitParam = Math.min(200, Math.max(1, parseInt(url.searchParams.get('limit') ?? '50', 10) || 50));
+      const cOffsetParam = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10) || 0);
       const contactRows = await query<{
         contact_id: string; max_score: number; summary_text: string | null; type: string | null;
         name: string | null; email: string | null; phone: string | null;
@@ -1154,8 +1383,9 @@ async function bootstrap(): Promise<void> {
              AND c.id IS NULL
            GROUP BY bi.contact_id
          ) q
-         ORDER BY q.max_score DESC`,
-        [auth.tenantId],
+         ORDER BY q.max_score DESC
+         LIMIT $2 OFFSET $3`,
+        [auth.tenantId, cLimitParam, cOffsetParam],
       );
       sendJson(res, 200, {
         contacts: contactRows.rows.map(r => ({
@@ -1171,6 +1401,9 @@ async function bootstrap(): Promise<void> {
           budget: r.budget ?? null,
           timeline: r.timeline ?? null,
         })),
+        total: contactRows.rows.length,
+        offset: cOffsetParam,
+        limit: cLimitParam,
       });
       return;
     }
@@ -1445,7 +1678,7 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── POST /v1/paperwork/send (JWT required) ───────────────────────────────
+    // ─── POST /v1/paperwork/send (JWT required, Professional) ────────────────
     if (req.method === 'POST' && url.pathname === '/v1/paperwork/send') {
       let auth: AuthContext;
       try {
@@ -1454,6 +1687,7 @@ async function bootstrap(): Promise<void> {
         sendJson(res, 401, { ok: false, error: (err as Error).message });
         return;
       }
+      if (!assertPlan(auth, 'professional', res)) return;
 
       let body: { documentIds?: string[]; contactId?: string; note?: string };
       try {
@@ -1496,7 +1730,7 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── GET /v1/open-house/guests (JWT required) ─────────────────────────────
+    // ─── GET /v1/open-house/guests (JWT required, Professional) ──────────────
     if (req.method === 'GET' && url.pathname === '/v1/open-house/guests') {
       let auth: AuthContext;
       try {
@@ -1505,6 +1739,7 @@ async function bootstrap(): Promise<void> {
         sendJson(res, 401, { ok: false, error: (err as Error).message });
         return;
       }
+      if (!assertPlan(auth, 'professional', res)) return;
       if (!dbAvailable) {
         sendJson(res, 200, { guests: [] });
         return;
@@ -1531,7 +1766,7 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── POST /v1/open-house/guests (JWT required) ────────────────────────────
+    // ─── POST /v1/open-house/guests (JWT required, Professional) ─────────────
     if (req.method === 'POST' && url.pathname === '/v1/open-house/guests') {
       let auth: AuthContext;
       try {
@@ -1540,6 +1775,7 @@ async function bootstrap(): Promise<void> {
         sendJson(res, 401, { ok: false, error: (err as Error).message });
         return;
       }
+      if (!assertPlan(auth, 'professional', res)) return;
       if (!dbAvailable) {
         sendJson(res, 503, { ok: false, error: 'Database not available' });
         return;
@@ -1609,7 +1845,7 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── POST /v1/open-house/conclude (JWT required) ──────────────────────────
+    // ─── POST /v1/open-house/conclude (JWT required, Professional) ───────────
     if (req.method === 'POST' && url.pathname === '/v1/open-house/conclude') {
       let auth: AuthContext;
       try {
@@ -1618,6 +1854,7 @@ async function bootstrap(): Promise<void> {
         sendJson(res, 401, { ok: false, error: (err as Error).message });
         return;
       }
+      if (!assertPlan(auth, 'professional', res)) return;
       if (!dbAvailable) {
         sendJson(res, 503, { ok: false, error: 'Database not available' });
         return;
@@ -2071,12 +2308,16 @@ async function bootstrap(): Promise<void> {
       }
       if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
       try {
-        const contactRow = await query<{ phone: string | null; sms_opted_in: boolean; name: string | null }>(
-          `SELECT phone, sms_opted_in, name FROM contacts WHERE tenant_id = $1 AND id = $2`,
+        const contactRow = await query<{ phone: string | null; sms_opted_in: boolean; do_not_contact: boolean; name: string | null }>(
+          `SELECT phone, sms_opted_in, do_not_contact, name FROM contacts WHERE tenant_id = $1 AND id = $2`,
           [auth.tenantId, smsContactId],
         );
         const contact = contactRow.rows[0];
         if (!contact) { sendJson(res, 404, { ok: false, error: 'Contact not found' }); return; }
+        if (contact.do_not_contact) {
+          sendJson(res, 403, { ok: false, error: 'Contact has opted out of all communications' });
+          return;
+        }
         if (!contact.sms_opted_in) {
           sendJson(res, 403, { ok: false, error: 'Contact has not opted in to SMS' });
           return;
@@ -2143,6 +2384,10 @@ async function bootstrap(): Promise<void> {
       let rawBody: string;
       try { rawBody = await readBodySafe(req); }
       catch { res.writeHead(400).end(); return; }
+      if (!validateTwilioSignature(req, rawBody)) {
+        res.writeHead(403).end();
+        return;
+      }
       // Parse Twilio application/x-www-form-urlencoded payload
       const params = new URLSearchParams(rawBody);
       const fromNumber = params.get('From') ?? '';
@@ -2153,14 +2398,13 @@ async function bootstrap(): Promise<void> {
       // Respond immediately to Twilio with empty TwiML
       res.writeHead(200, { 'Content-Type': 'text/xml' });
       res.end('<?xml version="1.0" encoding="UTF-8"?><Response></Response>');
-      // Handle STOP — opt out contact
+      // Handle STOP — opt out contact across ALL tenants that have this number.
+      // Honoring STOP for every tenant prevents re-sending to a number that has opted out
+      // of any agent's communications, regardless of which tenant's Twilio number they texted.
       if (/^stop$/i.test(body.trim())) {
         if (dbAvailable) {
           await query(
-            `UPDATE contacts SET sms_opted_in = false
-             WHERE phone = $1 AND tenant_id IN (
-               SELECT tenant_id FROM contacts WHERE phone = $1 LIMIT 1
-             )`,
+            `UPDATE contacts SET sms_opted_in = false WHERE phone = $1`,
             [fromNumber],
           ).catch(err => log.error('STOP opt-out failed', { error: String(err) }));
         }
@@ -2170,14 +2414,24 @@ async function bootstrap(): Promise<void> {
       setImmediate(async () => {
         try {
           if (!dbAvailable) return;
-          // Match sender to a known contact
+          // Route inbound SMS to every tenant that has a contact with this phone number.
+          // In a single-Twilio-number deployment all tenants share one number, so the
+          // correct approach is to deliver the message to every matching contact rather
+          // than picking one tenant arbitrarily with LIMIT 1 (which leaks data).
           const contactMatch = await query<{ tenant_id: string; id: string; name: string | null }>(
-            `SELECT tenant_id, id, name FROM contacts WHERE phone = $1 LIMIT 1`,
+            `SELECT tenant_id, id, name FROM contacts WHERE phone = $1`,
             [fromNumber],
           );
-          const matched = contactMatch.rows[0];
-          const tenantId = matched?.tenant_id ?? 'unknown';
-          const contactId = matched?.id ?? null;
+          if (contactMatch.rows.length > 1) {
+            log.warn(`[SMS] Inbound from ${fromNumber} matched ${contactMatch.rows.length} tenants — delivering to all. Consider per-tenant Twilio numbers.`);
+          }
+          const recipients = contactMatch.rows.length > 0
+            ? contactMatch.rows
+            : [{ tenant_id: 'unknown', id: null, name: null }];
+
+          for (const matched of recipients) {
+          const tenantId = matched.tenant_id;
+          const contactId = matched.id ?? null;
           const msgId = uuidv4();
           await query(
             `INSERT INTO sms_messages (id, tenant_id, contact_id, direction, body, from_number, to_number, twilio_sid, status, sent_via)
@@ -2209,6 +2463,7 @@ async function bootstrap(): Promise<void> {
               );
             }
           }
+          } // end for (const matched of recipients)
         } catch (err) {
           log.error('Inbound SMS processing failed', { error: String(err), twilioSid });
         }
@@ -2221,6 +2476,10 @@ async function bootstrap(): Promise<void> {
       let rawStatus: string;
       try { rawStatus = await readBodySafe(req); }
       catch { res.writeHead(400).end(); return; }
+      if (!validateTwilioSignature(req, rawStatus)) {
+        res.writeHead(403).end();
+        return;
+      }
       res.writeHead(204).end();
       const statusParams = new URLSearchParams(rawStatus);
       const statusSid = statusParams.get('MessageSid') ?? '';
@@ -2249,13 +2508,16 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── GET /v1/deals (JWT required) — list active deals ────────────────────
+    // ─── GET /v1/deals (JWT required, Professional) — list active deals ───────
     if (req.method === 'GET' && url.pathname === '/v1/deals') {
       let auth: AuthContext;
       try { auth = requireAuth(req); }
       catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
-      if (!dbAvailable) { sendJson(res, 200, { deals: [] }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      if (!dbAvailable) { sendJson(res, 200, { deals: [], total: 0, offset: 0, limit: 50 }); return; }
       try {
+        const limitParam = Math.min(100, Math.max(1, parseInt(url.searchParams.get('limit') ?? '50', 10) || 50));
+        const offsetParam = Math.max(0, parseInt(url.searchParams.get('offset') ?? '0', 10) || 0);
         const { rows } = await query<Record<string, unknown>>(
           `SELECT d.id, d.address, d.deal_type, d.stage, d.status, d.purchase_price,
                   d.closing_date, d.buyer_name, d.seller_name, d.contact_id, d.created_at,
@@ -2263,10 +2525,11 @@ async function bootstrap(): Promise<void> {
                    FROM deal_milestones m WHERE m.deal_id = d.id) AS milestones
            FROM deals d
            WHERE d.tenant_id = $1 AND d.status = 'active'
-           ORDER BY d.closing_date ASC NULLS LAST`,
-          [auth.tenantId],
+           ORDER BY d.closing_date ASC NULLS LAST
+           LIMIT $2 OFFSET $3`,
+          [auth.tenantId, limitParam, offsetParam],
         );
-        sendJson(res, 200, { deals: rows });
+        sendJson(res, 200, { deals: rows, total: rows.length, offset: offsetParam, limit: limitParam });
       } catch (err) {
         log.error('[GET /v1/deals] query failed', { error: String(err) });
         sendJson(res, 500, { ok: false, error: 'Failed to fetch deals' });
@@ -2274,11 +2537,12 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── GET /v1/deals/alerts (JWT required) — P0/P1 alerts ──────────────────
+    // ─── GET /v1/deals/alerts (JWT required, Professional) — P0/P1 alerts ─────
     if (req.method === 'GET' && url.pathname === '/v1/deals/alerts') {
       let auth: AuthContext;
       try { auth = requireAuth(req); }
       catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
       if (!dbAvailable) { sendJson(res, 200, { alerts: [] }); return; }
       try {
         const { rows } = await query<Record<string, unknown>>(
@@ -2298,11 +2562,12 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // ─── GET /v1/deals/:id (JWT required) — deal detail ──────────────────────
+    // ─── GET /v1/deals/:id (JWT required, Professional) — deal detail ─────────
     if (req.method === 'GET' && url.pathname.startsWith('/v1/deals/') && !url.pathname.includes('/milestones/') && !url.pathname.includes('/alerts/') && !url.pathname.includes('/documents/')) {
       let auth: AuthContext;
       try { auth = requireAuth(req); }
       catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
       const dealId = decodeURIComponent(url.pathname.slice('/v1/deals/'.length));
       if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
       try {
@@ -2700,6 +2965,12 @@ async function bootstrap(): Promise<void> {
     }
     if (dealJobCleanup) {
       await dealJobCleanup().catch(() => {});
+    }
+    if (trialExpiryCleanup) {
+      await trialExpiryCleanup().catch(() => {});
+    }
+    if (emailPurgeCleanup) {
+      await emailPurgeCleanup().catch(() => {});
     }
     if (gmailIngestCleanup) {
       await gmailIngestCleanup().catch(() => {});

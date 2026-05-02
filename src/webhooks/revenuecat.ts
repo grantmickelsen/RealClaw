@@ -12,6 +12,7 @@
  * Integrations → Webhooks.  Set it as the REVENUECAT_WEBHOOK_AUTH_KEY env var.
  */
 
+import crypto from 'crypto';
 import type { IncomingMessage, ServerResponse } from 'http';
 import { query } from '../db/postgres.js';
 import type { SubscriptionTier, SubscriptionStatus } from '../middleware/auth.js';
@@ -34,6 +35,8 @@ type RcEventType =
 interface RcEvent {
   type: RcEventType;
   app_user_id: string;
+  /** Present on SUBSCRIBER_ALIAS — the old anonymous or previous customer ID. */
+  original_app_user_id?: string;
   product_id?: string;
   entitlement_ids?: string[];
   expiration_at_ms?: number;
@@ -66,7 +69,7 @@ async function applySubscriptionEvent(event: RcEvent): Promise<void> {
       const expiresAt = expiration_at_ms
         ? new Date(expiration_at_ms).toISOString()
         : null;
-      await query(
+      const result = await query(
         `UPDATE tenants
          SET subscription_tier       = $1,
              subscription_status     = 'active',
@@ -76,60 +79,106 @@ async function applySubscriptionEvent(event: RcEvent): Promise<void> {
             OR (revenuecat_customer_id IS NULL AND tenant_id = $3)`,
         [tier, expiresAt, customerId],
       );
-      log.info(`[RevenueCat] ${type} → tenant ${customerId} upgraded to ${tier}`);
+      if (!result.rowCount) {
+        log.error(`[RevenueCat] ${type}: no tenant matched for customer ID ${customerId}`);
+      } else {
+        log.info(`[RevenueCat] ${type} → tenant ${customerId} upgraded to ${tier}`);
+      }
       break;
     }
 
     case 'PRODUCT_CHANGE': {
       const tier = productToTier(product_id);
-      await query(
+      const expiresAt = expiration_at_ms
+        ? new Date(expiration_at_ms).toISOString()
+        : null;
+      // COALESCE preserves the existing expiry if RC doesn't send a new one
+      const result = await query(
         `UPDATE tenants
-         SET subscription_tier = $1
-         WHERE revenuecat_customer_id = $2 OR tenant_id = $2`,
-        [tier, customerId],
+         SET subscription_tier       = $1,
+             subscription_expires_at = COALESCE($2::timestamptz, subscription_expires_at)
+         WHERE revenuecat_customer_id = $3 OR tenant_id = $3`,
+        [tier, expiresAt, customerId],
       );
-      log.info(`[RevenueCat] PRODUCT_CHANGE → tenant ${customerId} changed to ${tier}`);
+      if (!result.rowCount) {
+        log.error(`[RevenueCat] PRODUCT_CHANGE: no tenant matched for customer ID ${customerId}`);
+      } else {
+        log.info(`[RevenueCat] PRODUCT_CHANGE → tenant ${customerId} changed to ${tier}`);
+      }
       break;
     }
 
     case 'CANCELLATION':
     case 'EXPIRATION': {
-      await query(
+      const result = await query(
         `UPDATE tenants
          SET subscription_tier   = 'starter',
              subscription_status = 'cancelled'
          WHERE revenuecat_customer_id = $1 OR tenant_id = $1`,
         [customerId],
       );
-      log.info(`[RevenueCat] ${type} → tenant ${customerId} downgraded to starter`);
+      if (!result.rowCount) {
+        log.error(`[RevenueCat] ${type}: no tenant matched for customer ID ${customerId}`);
+      } else {
+        log.info(`[RevenueCat] ${type} → tenant ${customerId} downgraded to starter`);
+      }
       break;
     }
 
     case 'BILLING_ISSUE': {
       // Keep tier active during the grace period; status signals the issue.
-      await query(
+      const result = await query(
         `UPDATE tenants
          SET subscription_status = 'past_due'
          WHERE revenuecat_customer_id = $1 OR tenant_id = $1`,
         [customerId],
       );
-      log.info(`[RevenueCat] BILLING_ISSUE → tenant ${customerId} set to past_due`);
+      if (!result.rowCount) {
+        log.error(`[RevenueCat] BILLING_ISSUE: no tenant matched for customer ID ${customerId}`);
+      } else {
+        log.info(`[RevenueCat] BILLING_ISSUE → tenant ${customerId} set to past_due`);
+      }
       break;
     }
 
     case 'PAUSE': {
-      await query(
+      const result = await query(
         `UPDATE tenants
          SET subscription_status = 'paused'
          WHERE revenuecat_customer_id = $1 OR tenant_id = $1`,
         [customerId],
       );
-      log.info(`[RevenueCat] PAUSE → tenant ${customerId} paused`);
+      if (!result.rowCount) {
+        log.error(`[RevenueCat] PAUSE: no tenant matched for customer ID ${customerId}`);
+      } else {
+        log.info(`[RevenueCat] PAUSE → tenant ${customerId} paused`);
+      }
+      break;
+    }
+
+    case 'SUBSCRIBER_ALIAS': {
+      // Fired when an anonymous RC customer ID is aliased to a real app user ID.
+      // Update the stored revenuecat_customer_id to the new canonical ID so future
+      // events continue to match this tenant.
+      const canonicalId = customerId;
+      const oldId = event.original_app_user_id ?? canonicalId;
+      const result = await query(
+        `UPDATE tenants
+         SET revenuecat_customer_id = $1
+         WHERE revenuecat_customer_id = $2
+            OR (revenuecat_customer_id IS NULL AND tenant_id = $2)`,
+        [canonicalId, oldId],
+      );
+      if (!result.rowCount) {
+        log.warn(`[RevenueCat] SUBSCRIBER_ALIAS: no tenant matched old ID ${oldId} → canonical ${canonicalId}`);
+      } else {
+        log.info(`[RevenueCat] SUBSCRIBER_ALIAS → ${oldId} aliased to ${canonicalId}`);
+      }
       break;
     }
 
     default:
-      log.info(`[RevenueCat] Unhandled event type: ${type}`);
+      log.info(`[RevenueCat] Unhandled event type: ${type as string}`);
   }
 }
 
@@ -140,18 +189,31 @@ export async function handleRevenueCatWebhook(
   res: ServerResponse,
   body: string,
 ): Promise<void> {
-  // Authenticate using shared secret
   const authKey = process.env.REVENUECAT_WEBHOOK_AUTH_KEY;
-  if (authKey) {
+
+  if (!authKey) {
+    // Refuse all requests in production if the key is not configured.
+    if (process.env.NODE_ENV === 'production') {
+      log.error('[RevenueCat] REVENUECAT_WEBHOOK_AUTH_KEY not set — refusing webhook in production');
+      res.writeHead(500, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Webhook authentication not configured' }));
+      return;
+    }
+    log.warn('[RevenueCat] REVENUECAT_WEBHOOK_AUTH_KEY not set — webhook auth disabled (dev only)');
+  } else {
+    // Timing-safe comparison to prevent secret oracle attacks.
     const authHeader = req.headers['authorization'];
-    const provided = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : undefined;
-    if (provided !== authKey) {
+    const provided = authHeader?.startsWith('Bearer ') ? authHeader.slice(7) : '';
+    const providedBuf = Buffer.from(provided, 'utf8');
+    const expectedBuf = Buffer.from(authKey, 'utf8');
+    const valid =
+      providedBuf.length === expectedBuf.length &&
+      crypto.timingSafeEqual(providedBuf, expectedBuf);
+    if (!valid) {
       res.writeHead(401, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: 'Unauthorized' }));
       return;
     }
-  } else {
-    log.warn('[RevenueCat] REVENUECAT_WEBHOOK_AUTH_KEY not set — webhook auth disabled');
   }
 
   let payload: RcWebhookPayload;

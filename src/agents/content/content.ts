@@ -2,6 +2,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { BaseAgent } from '../base-agent.js';
 import { AgentId, ModelTier } from '../../types/agents.js';
 import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSection } from '../../types/messages.js';
+import log from '../../utils/logger.js';
 
 export class ContentAgent extends BaseAgent {
   async handleTask(request: TaskRequest): Promise<TaskResult> {
@@ -232,9 +233,16 @@ export class ContentAgent extends BaseAgent {
   private async generateListingVariants(listingData: string): Promise<{
     standard: string; story: string; bullet: string; luxury: string;
   }> {
+    // Read agent identity footer for advertising disclosure (state law requires brokerage name + license in all ads)
+    let adDisclosure = '';
+    try {
+      const f = await this.readMemory({ path: 'client-profile/footer.md' });
+      if (f.content.trim()) adDisclosure = `\n\nRequired advertising disclosure to append to every variant:\n${f.content.trim()}`;
+    } catch { /* not yet configured — omit disclosure */ }
+
     const prompt = `Generate 4 listing description variants for this property. Each must be unique, accurate, and fair-housing compliant.
 
-Property data: ${listingData}
+Property data: ${listingData}${adDisclosure}
 
 Format as JSON with keys: standard (MLS standard, 200 words), story (narrative, 150 words), bullet (bullet points, 8 items), luxury (premium tone, 200 words).`;
 
@@ -374,7 +382,10 @@ Format as JSON with keys: standard (MLS standard, 200 words), story (narrative, 
         flags,
       };
     } catch {
-      return { passed: true, flags: [] };
+      // Fail-secure: if the compliance agent is unavailable, block rather than pass.
+      // Failing open here would allow non-compliant content to publish silently.
+      log.warn('[ContentAgent] Compliance check unavailable — blocking content for review');
+      return { passed: false, flags: ['compliance_check_unavailable'] };
     }
   }
 }

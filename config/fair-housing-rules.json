@@ -2,6 +2,13 @@
   "version": "1.0.0",
   "rules": [
     {
+      "id": "respa-001",
+      "description": "RESPA § 8 — potential kickback or referral fee language",
+      "pattern": "referral\\s+fee|finder.s\\s+fee|refer\\s+and\\s+earn|kickback|commission\\s+split.*unlicensed|pay.*for.*referral|reward.*for.*referral",
+      "severity": "error",
+      "suggestion": "This language may imply a prohibited kickback or unearned fee arrangement under RESPA § 8. Remove or rephrase, and consult your broker."
+    },
+    {
       "id": "fh-custom-001",
       "description": "Walking distance to religious institutions",
       "pattern": "walking\\s+distance\\s+to\\s+(church|synagogue|mosque|temple)",

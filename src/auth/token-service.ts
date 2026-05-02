@@ -64,32 +64,28 @@ export async function issueTokenPair(
 /**
  * Rotate a refresh token: revoke the old one, issue a new pair.
  * Returns null if token is invalid, expired, or already revoked (single-use).
+ *
+ * Uses a single atomic UPDATE ... RETURNING to prevent a race condition where
+ * two concurrent refresh requests both observe revoked_at = NULL before either
+ * writes, resulting in two valid token pairs being issued for one token.
  */
 export async function rotateRefreshToken(rawToken: string): Promise<TokenPair | null> {
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
 
-  const result = await query<{
-    tenant_id: string;
-    user_id: string;
-    expires_at: string;
-    revoked_at: string | null;
-  }>(
-    `SELECT tenant_id, user_id, expires_at, revoked_at
-     FROM refresh_tokens
-     WHERE token_hash = $1`,
+  // Atomically revoke and retrieve in one round-trip.
+  // Returns 0 rows if the token is already revoked, expired, or doesn't exist.
+  const result = await query<{ tenant_id: string; user_id: string }>(
+    `UPDATE refresh_tokens
+     SET revoked_at = NOW()
+     WHERE token_hash = $1
+       AND revoked_at IS NULL
+       AND expires_at > NOW()
+     RETURNING tenant_id, user_id`,
     [tokenHash],
   );
 
   const row = result.rows[0];
   if (!row) return null;
-  if (row.revoked_at) return null;
-  if (new Date(row.expires_at) < new Date()) return null;
-
-  // Revoke the old token (rotation — single-use guarantee)
-  await query(
-    `UPDATE refresh_tokens SET revoked_at = NOW() WHERE token_hash = $1`,
-    [tokenHash],
-  );
 
   return issueTokenPair(row.tenant_id, row.user_id);
 }
