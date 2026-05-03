@@ -136,11 +136,14 @@ export async function handleGmailWebhook(
     // This prevents unauthenticated webhook injection in all environments.
     const mockSecret = process.env.GMAIL_WEBHOOK_DEV_SECRET;
     const providedSecret = req.headers['x-webhook-dev-secret'] as string | undefined;
+    const providedBuf = Buffer.from(providedSecret ?? '');
+    const expectedBuf = Buffer.from(mockSecret);
     const mockAllowed =
       process.env.NODE_ENV !== 'production' &&
       mockSecret &&
       providedSecret &&
-      crypto.timingSafeEqual(Buffer.from(providedSecret), Buffer.from(mockSecret));
+      providedBuf.length === expectedBuf.length &&
+      crypto.timingSafeEqual(providedBuf, expectedBuf);
     if (!mockAllowed) {
       res.writeHead(401); res.end();
       return;

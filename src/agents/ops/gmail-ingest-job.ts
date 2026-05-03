@@ -276,6 +276,14 @@ async function processMessage(
   const rawText = extractPlainText(fullMsg.payload);
   const bodyText = rawText.slice(0, 2000).trim() || null;
 
+  // Pre-filter for wire fraud signals before storing
+  const WIRE_FRAUD_KEYWORDS = [
+    'wire transfer', 'wiring instructions', 'change wire', 'new bank account',
+    'updated banking', 'change account number', 'updated wire',
+  ];
+  const checkText = `${subject} ${bodyText ?? ''}`.toLowerCase();
+  const wireFraudSignal = WIRE_FRAUD_KEYWORDS.some(kw => checkText.includes(kw));
+
   // Match against pre-loaded contact map (avoids per-message DB round-trip)
   const contactId: string | null = contactByEmail.get(fromAddress.toLowerCase()) ?? null;
 
@@ -309,6 +317,7 @@ async function processMessage(
     bodyText,
     contactId,
     filterCategory: filterResult.category,
+    wireFraudSignal,
   });
 }
 

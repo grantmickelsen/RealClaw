@@ -2,10 +2,12 @@ import { View, Text, StyleSheet, TouchableOpacity } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { router } from 'expo-router';
+import { useRef, useState, useEffect } from 'react';
+import BottomSheet from '@gorhom/bottom-sheet';
 import { useKioskStore } from '../../store/kiosk';
 import { useSubscriptionStore } from '../../store/subscription';
 import { loadTodayGuests } from '../../lib/db';
-import { useState, useEffect } from 'react';
+import { AddContactSheet } from '../../components/contacts/AddContactSheet';
 
 interface GrowthCard {
   id: string;
@@ -13,7 +15,9 @@ interface GrowthCard {
   subtitle: string;
   icon: keyof typeof Ionicons.glyphMap;
   iconBg: string;
-  route: string;
+  route?: string;
+  action?: 'add_contact' | 'add_home';
+  proRequired?: boolean;
 }
 
 const CARDS: GrowthCard[] = [
@@ -24,6 +28,7 @@ const CARDS: GrowthCard[] = [
     icon: 'camera-outline',
     iconBg: '#6366F1',
     route: '/(main)/studio',
+    proRequired: true,
   },
   {
     id: 'open_house',
@@ -32,6 +37,23 @@ const CARDS: GrowthCard[] = [
     icon: 'home-outline',
     iconBg: '#0066FF',
     route: '/(main)/kiosk',
+    proRequired: true,
+  },
+  {
+    id: 'add_contact',
+    title: 'Add Contact',
+    subtitle: 'Quickly add a lead, buyer, or past client to your pipeline',
+    icon: 'person-add-outline',
+    iconBg: '#16A34A',
+    action: 'add_contact',
+  },
+  {
+    id: 'add_home',
+    title: 'Add Home',
+    subtitle: 'Create a property card and import details from RentCast',
+    icon: 'business-outline',
+    iconBg: '#D97706',
+    action: 'add_home',
   },
 ];
 
@@ -41,6 +63,7 @@ export default function GrowthScreen() {
   const [todayGuestCount, setTodayGuestCount] = useState(0);
   const [paywallVisible, setPaywallVisible] = useState(false);
   const [paywallContext, setPaywallContext] = useState('');
+  const addContactRef = useRef<BottomSheet>(null);
 
   useEffect(() => {
     loadTodayGuests().then(guests => setTodayGuestCount(guests.length)).catch(() => {});
@@ -50,12 +73,22 @@ export default function GrowthScreen() {
   const PaywallModal = require('../../components/paywall/PaywallModal').PaywallModal as typeof import('../../components/paywall/PaywallModal').PaywallModal;
 
   function handleCardPress(card: GrowthCard) {
-    if (!isProfessional) {
+    if (card.proRequired && !isProfessional) {
       setPaywallContext(`Unlock ${card.title}`);
       setPaywallVisible(true);
       return;
     }
-    router.push(card.route as never);
+    if (card.action === 'add_contact') {
+      addContactRef.current?.snapToIndex(0);
+      return;
+    }
+    if (card.action === 'add_home') {
+      router.push('/(main)/listings/new' as never);
+      return;
+    }
+    if (card.route) {
+      router.push(card.route as never);
+    }
   }
 
   return (
@@ -98,9 +131,9 @@ export default function GrowthScreen() {
               <Text style={styles.cardTitle}>{card.title}</Text>
               <Text style={styles.cardSubtitle}>{card.subtitle}</Text>
             </View>
-            {isProfessional
-              ? <Ionicons name="chevron-forward" size={20} color="#C4C9D4" />
-              : <View style={styles.proBadge}><Text style={styles.proBadgeText}>✦ Pro</Text></View>
+            {card.proRequired && !isProfessional
+              ? <View style={styles.proBadge}><Text style={styles.proBadgeText}>✦ Pro</Text></View>
+              : <Ionicons name="chevron-forward" size={20} color="#C4C9D4" />
             }
           </TouchableOpacity>
         ))}
@@ -110,6 +143,11 @@ export default function GrowthScreen() {
         visible={paywallVisible}
         onClose={() => setPaywallVisible(false)}
         contextTitle={paywallContext}
+      />
+
+      <AddContactSheet
+        bottomSheetRef={addContactRef}
+        onSaved={() => {}}
       />
     </SafeAreaView>
   );

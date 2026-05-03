@@ -128,7 +128,7 @@ describe('ApprovalManager — DB persistence', () => {
     });
 
     const updateCall = queryFn.mock.calls.find((c: unknown[]) =>
-      (c[0] as string).includes("status = 'completed'"),
+      (c[0] as string).includes("status = 'approved'"),
     );
     expect(updateCall).toBeDefined();
     expect(updateCall?.[1]).toContain('approve-xyz');

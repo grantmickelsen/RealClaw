@@ -31,6 +31,8 @@ interface StudioState {
   pendingApprovalId: string | null;
   contactId: string | null;
   contactName: string | null;
+  listingId: string | null;
+  listingAddress: string | null;
 
   setLoading(v: boolean): void;
   setTargetMode(mode: StudioMode): void;
@@ -45,6 +47,7 @@ interface StudioState {
   setPendingCorrelationId(id: string | null): void;
   setPendingApprovalId(id: string | null): void;
   setContact(id: string | null, name: string | null): void;
+  setListing(id: string | null, address: string | null, features?: string): void;
   reset(): void;
 }
 
@@ -63,6 +66,8 @@ export const useStudioStore = create<StudioState>((set) => ({
   pendingApprovalId: null,
   contactId: null,
   contactName: null,
+  listingId: null,
+  listingAddress: null,
 
   setLoading: (v) => set({ loading: v }),
 
@@ -88,6 +93,12 @@ export const useStudioStore = create<StudioState>((set) => ({
 
   setContact: (id, name) => set({ contactId: id, contactName: name }),
 
+  setListing: (id, address, features) => set((s) => ({
+    listingId: id,
+    listingAddress: address,
+    ...(features !== undefined ? { keyFeatures: features } : {}),
+  })),
+
   updateDraft: (field, value) => set((s) => {
     if (!s.drafts) return s;
     const updated = { ...s.drafts, [field]: value };
@@ -111,6 +122,8 @@ export const useStudioStore = create<StudioState>((set) => ({
     pendingApprovalId: null,
     contactId: null,
     contactName: null,
+    listingId: null,
+    listingAddress: null,
     platforms: ['MLS', 'Instagram', 'Facebook'],
     stagingStyle: 'Modern',
   }),

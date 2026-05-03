@@ -98,6 +98,48 @@ export interface NormalizedContact {
   customFields: Record<string, string>;
 }
 
+export interface RentCastPropertyRecord {
+  address: string;
+  city: string;
+  state: string;
+  zip: string;
+  county?: string;
+  latitude?: number;
+  longitude?: number;
+  propertyType?: string;
+  beds?: number;
+  baths?: number;
+  sqft?: number;
+  lotSqft?: number;
+  yearBuilt?: number;
+  zoning?: string;
+  lastSaleDate?: string;
+  lastSalePrice?: number;
+  ownerName?: string;
+  ownerOccupied?: boolean;
+  // Advanced features
+  garageSpaces?: number;
+  pool?: boolean;
+  spa?: boolean;
+  stories?: number;
+  roofType?: string;
+  constructionType?: string;
+  foundation?: string;
+  heating?: string;
+  cooling?: string;
+  fireplaces?: number;
+  // HOA
+  hoaMonthly?: number | null;
+  // Schools
+  schoolDistrict?: string;
+  // Tax
+  taxAssessedValue?: number;
+  taxYear?: number;
+  taxAmount?: number;
+  // Flood
+  floodZone?: string;
+}
+
 export interface NormalizedListing {
   mlsNumber: string;
   address: string;

@@ -17,6 +17,7 @@ import { StyleSelector } from '../../components/studio/StyleSelector';
 import { PlatformSelector } from '../../components/studio/PlatformSelector';
 import { AssetUploader, type PickedAsset } from '../../components/studio/AssetUploader';
 import { DraftCard } from '../../components/studio/DraftCard';
+import { PropertySelector } from '../../components/studio/PropertySelector';
 import type { DraftField } from '../../store/studio';
 
 type Preset = 'new_listing' | 'just_sold' | 'open_house_recap' | 'price_reduction';
@@ -69,6 +70,7 @@ export default function StudioScreen() {
   const pendingApprovalId = useStudioStore(s => s.pendingApprovalId);
   const contactId        = useStudioStore(s => s.contactId);
   const contactName      = useStudioStore(s => s.contactName);
+  const listingId        = useStudioStore(s => s.listingId);
   const setLoading       = useStudioStore(s => s.setLoading);
   const setTargetMode    = useStudioStore(s => s.setTargetMode);
   const setPreset        = useStudioStore(s => s.setPreset);
@@ -131,6 +133,7 @@ export default function StudioScreen() {
           preset,
           tone: selectedTone,
           ...(contactId ? { contactId } : {}),
+          ...(listingId ? { listingId } : {}),
         }),
       });
       if (!res.ok) {
@@ -144,7 +147,7 @@ export default function StudioScreen() {
       setLoading(false);
       Alert.alert('Error', 'Network error. Please try again.');
     }
-  }, [preset, selectedTone, keyFeatures, assets, platforms, contactId, setLoading, setPending]);
+  }, [preset, selectedTone, keyFeatures, assets, platforms, contactId, listingId, setLoading, setPending]);
 
   const handleRegenerate = useCallback(async () => {
     if (!featureJson) return;
@@ -161,6 +164,7 @@ export default function StudioScreen() {
           tone: selectedTone,
           featureJson,
           ...(contactId ? { contactId } : {}),
+          ...(listingId ? { listingId } : {}),
         }),
       });
       if (!res.ok) {
@@ -174,7 +178,7 @@ export default function StudioScreen() {
       setLoading(false);
       Alert.alert('Error', 'Network error. Please try again.');
     }
-  }, [featureJson, selectedTone, preset, keyFeatures, platforms, contactId, setLoading, setPending]);
+  }, [featureJson, selectedTone, preset, keyFeatures, platforms, contactId, listingId, setLoading, setPending]);
 
   const handleStageRoom = useCallback(async () => {
     if (assets.length === 0 || !assets[0]?.base64) {
@@ -415,6 +419,9 @@ export default function StudioScreen() {
             {assets.length > 0 && (
               <Text style={styles.visionBadge}>✨ AI will analyze your photos</Text>
             )}
+
+            <Text style={styles.sectionLabel}>Property (optional)</Text>
+            <PropertySelector />
 
             <Text style={styles.sectionLabel}>Key Features</Text>
             <TextInput

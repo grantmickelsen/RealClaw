@@ -263,4 +263,73 @@ describe('GmailIngestWorker', () => {
     expect(dispatchRow['fromAddress']).toBe('leads@zillow.com');
     expect(dispatchRow['filterCategory']).toBe('lead_platform');
   });
+
+  it('sets wireFraudSignal=true when subject contains wire fraud keywords', async () => {
+    mockVault.retrieve.mockImplementation((_id: string, key: string) => {
+      if (key === 'access_token') return Promise.resolve('fake-token');
+      if (key === 'expires_at') return Promise.resolve(new Date(Date.now() + 3_600_000).toISOString());
+      return Promise.resolve(null);
+    });
+
+    const fraudSubject = 'URGENT: Updated Wire Transfer Instructions for Closing';
+    const fraudBody = 'Please use the new wiring instructions below.';
+    const fraudSender = 'escrow@title.com';
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ history_id: '600' }] }) // SELECT history_id
+      // contacts — sender is a known contact so message passes filter
+      .mockResolvedValueOnce({ rows: [{ email: fraudSender, id: 'contact-escrow' }] })
+      .mockResolvedValueOnce({ rows: [] }) // duplicate check
+      .mockResolvedValueOnce({ rows: [] }) // INSERT inbound_emails
+      .mockResolvedValue({ rows: [] });    // labels update + history update
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeHistoryResponse(['msg-fraud']))
+      .mockResolvedValueOnce(makeMetadataMessage('msg-fraud', fraudSender, fraudSubject))
+      .mockResolvedValueOnce(makeFullMessage('msg-fraud', fraudSender, fraudSubject, fraudBody))
+      .mockResolvedValueOnce(makeLabelsResponse([{ id: 'lbl-1', name: 'RealClaw/Processed' }]))
+      .mockResolvedValue(makeModifyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const worker = registerGmailIngestWorker({ host: 'localhost', port: 6379 }, mockVault as never, mockDispatch);
+    await invokeWorker(worker as never, { tenantId: 'tenant-a', newHistoryId: '700' });
+
+    expect(mockDispatch).toHaveBeenCalledOnce();
+    const [, dispatchRow] = mockDispatch.mock.calls[0] as [string, Record<string, unknown>];
+    expect(dispatchRow['wireFraudSignal']).toBe(true);
+  });
+
+  it('sets wireFraudSignal=false for normal (non-fraud) email', async () => {
+    mockVault.retrieve.mockImplementation((_id: string, key: string) => {
+      if (key === 'access_token') return Promise.resolve('fake-token');
+      if (key === 'expires_at') return Promise.resolve(new Date(Date.now() + 3_600_000).toISOString());
+      return Promise.resolve(null);
+    });
+
+    const normalSender = 'client@example.com';
+    const normalSubject = 'Looking forward to our closing!';
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ history_id: '600' }] }) // SELECT history_id
+      // contacts — sender is known contact
+      .mockResolvedValueOnce({ rows: [{ email: normalSender, id: 'contact-client' }] })
+      .mockResolvedValueOnce({ rows: [] }) // duplicate check
+      .mockResolvedValueOnce({ rows: [] }) // INSERT
+      .mockResolvedValue({ rows: [] });
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(makeHistoryResponse(['msg-normal']))
+      .mockResolvedValueOnce(makeMetadataMessage('msg-normal', normalSender, normalSubject))
+      .mockResolvedValueOnce(makeFullMessage('msg-normal', normalSender, normalSubject, 'Great meeting today.'))
+      .mockResolvedValueOnce(makeLabelsResponse([{ id: 'lbl-1', name: 'RealClaw/Processed' }]))
+      .mockResolvedValue(makeModifyResponse());
+    vi.stubGlobal('fetch', fetchMock);
+
+    const worker = registerGmailIngestWorker({ host: 'localhost', port: 6379 }, mockVault as never, mockDispatch);
+    await invokeWorker(worker as never, { tenantId: 'tenant-a', newHistoryId: '700' });
+
+    expect(mockDispatch).toHaveBeenCalledOnce();
+    const [, dispatchRow] = mockDispatch.mock.calls[0] as [string, Record<string, unknown>];
+    expect(dispatchRow['wireFraudSignal']).toBe(false);
+  });
 });

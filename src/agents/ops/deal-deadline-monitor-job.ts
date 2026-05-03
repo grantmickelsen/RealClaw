@@ -12,6 +12,7 @@ import { query } from '../../db/postgres.js';
 import log from '../../utils/logger.js';
 import type { WsPusher } from '../base-agent.js';
 import type { WsEnvelope } from '../../types/ws.js';
+import type { PushNotificationService } from '../../gateway/push-notification.js';
 
 const QUEUE_NAME = 'claw_deal-deadline-monitor';
 const CRON_UTC = '0 7 * * *';
@@ -34,7 +35,7 @@ function buildAlertMessage(milestone: MilestoneRow, isOverdue: boolean): string 
   return `"${milestone.label}" deadline ${when} (${new Date(milestone.deadline).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`;
 }
 
-async function runMonitorForTenant(tenantId: string, wsPusher: WsPusher | undefined): Promise<void> {
+async function runMonitorForTenant(tenantId: string, wsPusher: WsPusher | undefined, pushService?: PushNotificationService): Promise<void> {
   const now = new Date();
   const horizon = new Date(now.getTime() + 48 * 60 * 60 * 1000);
 
@@ -109,6 +110,7 @@ async function runMonitorForTenant(tenantId: string, wsPusher: WsPusher | undefi
       },
     };
     wsPusher?.push(tenantId, envelope);
+    void pushService?.sendDealAlertPush(tenantId, alertId, message, priority);
   }
 
   log.info(`[DealDeadlineMonitor:${tenantId}] Processed ${result.rows.length} milestone(s)`);
@@ -117,6 +119,7 @@ async function runMonitorForTenant(tenantId: string, wsPusher: WsPusher | undefi
 export function registerDealDeadlineMonitorJob(
   connection: ConnectionOptions,
   wsPusher?: WsPusher,
+  pushService?: PushNotificationService,
 ): { queue: Queue; worker: Worker } {
   const queue = new Queue(QUEUE_NAME, { connection });
 
@@ -141,7 +144,10 @@ export function registerDealDeadlineMonitorJob(
       let tenantIds: string[] = [];
       try {
         const result = await query<{ tenant_id: string }>(
-          `SELECT DISTINCT tenant_id FROM tenants WHERE onboarding_done = true ORDER BY tenant_id`,
+          `SELECT DISTINCT tenant_id FROM tenants
+           WHERE onboarding_done = true
+             AND subscription_status NOT IN ('cancelled', 'expired')
+           ORDER BY tenant_id`,
         );
         tenantIds = result.rows.map(r => r.tenant_id);
       } catch (err) {
@@ -151,7 +157,7 @@ export function registerDealDeadlineMonitorJob(
 
       for (const tenantId of tenantIds) {
         try {
-          await runMonitorForTenant(tenantId, wsPusher);
+          await runMonitorForTenant(tenantId, wsPusher, pushService);
         } catch (err) {
           log.error(`[DealDeadlineMonitor] Tenant ${tenantId} failed`, { error: (err as Error).message });
         }

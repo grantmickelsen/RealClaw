@@ -73,13 +73,16 @@ describe('BriefingGeneratorJob', () => {
 
     const insertCalls = mockQuery.mock.calls.filter(
       (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('INSERT INTO briefing_items'),
-    );
-    expect(insertCalls).toHaveLength(2);
+    ) as [string, unknown[][]][];
+    // Batch UNNEST insert fires once for all items
+    expect(insertCalls).toHaveLength(1);
 
-    // Each INSERT should include tenant_id and correct type
-    const firstParams = (insertCalls[0] as [string, unknown[]])[1];
-    expect(firstParams).toContain('tenant-a');
-    expect(firstParams).toContain('follow_up');
+    // params[0] = tenantId[], params[1] = type[]
+    const params = insertCalls[0]![1];
+    const tenantIds = params[0] as string[];
+    const types = params[1] as string[];
+    expect(tenantIds).toContain('tenant-a');
+    expect(types).toContain('follow_up');
   });
 
   it('processes multiple tenants sequentially', async () => {
@@ -169,12 +172,26 @@ describe('BriefingGeneratorJob', () => {
 
     const insertCalls = mockQuery.mock.calls.filter(
       (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('INSERT INTO briefing_items'),
-    ) as [string, unknown[]][];
+    ) as [string, unknown[][]][];
 
-    // Both items inserted
-    expect(insertCalls).toHaveLength(2);
-    // urgency_score is 3rd parameter (index 2), clamped
-    expect(Number(insertCalls[0]![1][2])).toBe(10); // 999 → 10
-    expect(Number(insertCalls[1]![1][2])).toBe(1);  // -5 → 1
+    // Batch UNNEST insert fires once for all items
+    expect(insertCalls).toHaveLength(1);
+    // params[2] = urgencyScore[] — both values clamped
+    const urgencyScores = insertCalls[0]![1][2] as number[];
+    expect(urgencyScores).toHaveLength(2);
+    expect(Number(urgencyScores[0])).toBe(10); // 999 → 10
+    expect(Number(urgencyScores[1])).toBe(1);  // -5 → 1
+  });
+
+  it('tenant query excludes cancelled and expired subscriptions', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // no tenants returned
+
+    const mockLlm = { complete: vi.fn() };
+    const { worker } = registerBriefingJob({ host: 'localhost', port: 6379 }, mockLlm as never);
+    await invokeJob(worker as never);
+
+    const tenantQueryCall = mockQuery.mock.calls[0] as [string, unknown[]?];
+    expect(tenantQueryCall[0]).toContain("subscription_status NOT IN ('cancelled', 'expired')");
+    expect(mockLlm.complete).not.toHaveBeenCalled();
   });
 });

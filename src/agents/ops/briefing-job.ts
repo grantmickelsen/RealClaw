@@ -14,6 +14,9 @@ import log from '../../utils/logger.js';
 import { LlmRouter } from '../../llm/router.js';
 import { ModelTier } from '../../types/agents.js';
 
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (v: string | null | undefined): v is string => !!v && UUID_RE.test(v);
+
 const QUEUE_NAME = 'claw_briefing-generator';
 const CRON_UTC = '0 6 * * *';
 
@@ -34,7 +37,7 @@ async function upsertBriefingItems(items: BriefingItemInsert[]): Promise<void> {
     `INSERT INTO briefing_items
        (tenant_id, type, urgency_score, summary_text, draft_content, draft_medium, suggested_action, contact_id)
      SELECT * FROM UNNEST(
-       $1::text[], $2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::text[]
+       $1::text[], $2::text[], $3::int[], $4::text[], $5::text[], $6::text[], $7::text[], $8::uuid[]
      )`,
     [
       items.map(i => i.tenantId),
@@ -67,18 +70,18 @@ export async function generateBriefingForTenant(tenantId: string, llmRouter: Llm
   let contactList = '';
   try {
     const contactResult = await query<{
-      contact_id: string; name: string | null;
-      stage: string | null; last_contact_date: string | null;
+      id: string; name: string | null;
+      stage: string | null; created_at: string | null;
     }>(
-      `SELECT contact_id, name, stage, last_contact_date
+      `SELECT id, name, stage, created_at
        FROM contacts
        WHERE tenant_id = $1 AND stage NOT IN ('closed','lost')
-       ORDER BY last_contact_date ASC NULLS FIRST
+       ORDER BY created_at ASC NULLS FIRST
        LIMIT 10`,
       [tenantId],
     );
     contactList = contactResult.rows
-      .map(c => `  - id:${c.contact_id} | name:${c.name ?? 'Unknown'} | stage:${c.stage ?? 'unknown'} | last_contact:${c.last_contact_date ?? 'never'}`)
+      .map(c => `  - id:${c.id} | name:${c.name ?? 'Unknown'} | stage:${c.stage ?? 'unknown'} | added:${c.created_at ?? 'unknown'}`)
       .join('\n');
   } catch { /* best-effort */ }
 
@@ -142,7 +145,7 @@ Return ONLY the JSON array, no other text.`,
           draftContent: p.draftContent,
           draftMedium: p.draftMedium,
           suggestedAction: p.suggestedAction,
-          contactId: p.contactId ?? undefined,
+          contactId: isUuid(p.contactId) ? p.contactId : undefined,
         }));
     }
   } catch (err) {
@@ -187,6 +190,7 @@ export function registerBriefingJob(
         const result = await query<{ tenant_id: string }>(
           `SELECT DISTINCT tenant_id FROM tenants
            WHERE onboarding_done = true
+             AND subscription_status NOT IN ('cancelled', 'expired')
            ORDER BY tenant_id`,
         );
         tenantIds = result.rows.map(r => r.tenant_id);

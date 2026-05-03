@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from 'react';
-import { View, Text, FlatList, StyleSheet, type ListRenderItemInfo } from 'react-native';
+import { View, Text, ScrollView, StyleSheet } from 'react-native';
 
 const ITEM_H = 44;
 const VISIBLE = 5; // must be odd — center item is selected
@@ -11,48 +11,44 @@ interface Props {
 }
 
 export function WheelPicker({ items, selected, onChange }: Props) {
-  const listRef = useRef<FlatList<string>>(null);
+  const scrollRef = useRef<ScrollView>(null);
   const pad = ITEM_H * Math.floor(VISIBLE / 2);
   const height = ITEM_H * VISIBLE;
   const selIdx = Math.max(0, items.indexOf(selected));
 
   useEffect(() => {
     if (items.length > 0) {
-      listRef.current?.scrollToOffset({ offset: selIdx * ITEM_H, animated: false });
+      scrollRef.current?.scrollTo({ y: selIdx * ITEM_H, animated: false });
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // only on first mount — re-opens always re-mount
 
   const snap = useCallback((offset: number) => {
     const i = Math.max(0, Math.min(Math.round(offset / ITEM_H), items.length - 1));
-    listRef.current?.scrollToOffset({ offset: i * ITEM_H, animated: true });
     const val = items[i];
     if (val !== undefined) onChange(val);
   }, [items, onChange]);
 
-  const renderItem = useCallback(({ item }: ListRenderItemInfo<string>) => (
-    <View style={styles.item}>
-      <Text style={[styles.label, item === selected && styles.selectedLabel]}>{item}</Text>
-    </View>
-  ), [selected]);
-
   return (
     <View style={[styles.container, { height }]}>
       <View style={[styles.highlight, { top: pad }]} pointerEvents="none" />
-      <FlatList
-        ref={listRef}
-        data={items}
-        keyExtractor={i => i}
-        renderItem={renderItem}
+      <ScrollView
+        ref={scrollRef}
         snapToInterval={ITEM_H}
         decelerationRate="fast"
         showsVerticalScrollIndicator={false}
-        ListHeaderComponent={<View style={{ height: pad }} />}
-        ListFooterComponent={<View style={{ height: pad }} />}
         onMomentumScrollEnd={e => snap(e.nativeEvent.contentOffset.y)}
         onScrollEndDrag={e => snap(e.nativeEvent.contentOffset.y)}
-        getItemLayout={(_, index) => ({ length: ITEM_H, offset: ITEM_H * index, index })}
-      />
+        scrollEventThrottle={16}
+      >
+        <View style={{ height: pad }} />
+        {items.map(item => (
+          <View key={item} style={styles.item}>
+            <Text style={[styles.label, item === selected && styles.selectedLabel]}>{item}</Text>
+          </View>
+        ))}
+        <View style={{ height: pad }} />
+      </ScrollView>
     </View>
   );
 }

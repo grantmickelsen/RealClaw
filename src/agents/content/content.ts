@@ -3,6 +3,7 @@ import { BaseAgent } from '../base-agent.js';
 import { AgentId, ModelTier } from '../../types/agents.js';
 import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSection } from '../../types/messages.js';
 import log from '../../utils/logger.js';
+import { query as dbQuery } from '../../db/postgres.js';
 
 export class ContentAgent extends BaseAgent {
   async handleTask(request: TaskRequest): Promise<TaskResult> {
@@ -18,8 +19,9 @@ export class ContentAgent extends BaseAgent {
 
         case 'email_campaign_content': {
           const topic = request.data['topic'] ?? request.instructions;
+          const toneCtx = await this.getToneContext();
           const campaignJson = await this.ask(
-            `Email campaign sequence for real estate: ${topic}\nReturn JSON array [{dayOffset: number, subject: string, body: string}] for 5 emails max.\nExample: [{"dayOffset":0,"subject":"Just listed","body":"Exciting new listing!"}]`,
+            `Email campaign sequence for real estate: ${topic}${toneCtx}\nReturn JSON array [{dayOffset: number, subject: string, body: string}] for 5 emails max.\nExample: [{"dayOffset":0,"subject":"Just listed","body":"Exciting new listing!"}]`,
             ModelTier.BALANCED,
           );
           let campaign = [];
@@ -34,8 +36,9 @@ export class ContentAgent extends BaseAgent {
         case 'social_batch':
         case 'create_post': {
           const topic = request.data['topic'] ?? request.instructions;
+          const toneCtx = await this.getToneContext();
           const batch = await this.ask(
-            `Create a social media batch for a real estate agent. Generate 3 posts:\n1. Instagram (visual, 150 chars max, 5 hashtags)\n2. Facebook (conversational, 300 chars)\n3. LinkedIn (professional, 400 chars)\n\nTopic: ${topic}`,
+            `Create a social media batch for a real estate agent. Generate 3 posts:\n1. Instagram (visual, 150 chars max, 5 hashtags)\n2. Facebook (conversational, 300 chars)\n3. LinkedIn (professional, 400 chars)\n\nTopic: ${topic}${toneCtx}`,
             ModelTier.BALANCED,
           );
           return this.successResult(request, { text: batch }, {
@@ -81,10 +84,19 @@ export class ContentAgent extends BaseAgent {
           if (!compliance.passed) {
             return this.successResult(request, { complianceIssues: compliance.flags }, { processingMs: Date.now() - start });
           }
+          const toneCtx = await this.getToneContext();
           const guide = await this.ask(
-            `Create comprehensive neighborhood guide for ${area}:\nKB data: ${kbData}\n\nSections: overview, schools, commute, amenities, market trends, buyer appeal.`,
+            `Create comprehensive neighborhood guide for ${area}:\nKB data: ${kbData}${toneCtx}\n\nSections: overview, schools, commute, amenities, market trends, buyer appeal.`,
             ModelTier.BALANCED,
           );
+          // Persist guide to knowledge base for future reference
+          const safeName = area.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+          void this.writeMemory({
+            path: `market-data/neighborhood-guide-${safeName}.md`,
+            operation: 'create',
+            content: `# Neighborhood Guide: ${area}\n\nGenerated: ${new Date().toISOString()}\n\n${guide}`,
+            writtenBy: this.id,
+          }).catch(() => {});
           return this.successResult(request, { text: guide }, { processingMs: Date.now() - start });
         }
 
@@ -111,6 +123,37 @@ export class ContentAgent extends BaseAgent {
           const images = (request.data['images'] as string[] | undefined) ?? [];
           const platforms = (request.data['platforms'] as string[] | undefined) ?? ['MLS', 'Instagram', 'Facebook'];
           const contactId = String(request.data['contactId'] ?? '');
+          const listingId = request.data['listingId'] ? String(request.data['listingId']) : null;
+
+          // Fetch listing property context if listingId provided
+          let propertyContext = '';
+          if (listingId) {
+            try {
+              type ListingRow = {
+                address: string; city: string | null; state: string | null; zip: string | null;
+                price: number | null; beds: number | null; baths: number | null;
+                sqft: number | null; lot_sqft: number | null; year_built: number | null;
+                description: string | null; features: string[]; advanced_data: Record<string, unknown>;
+              };
+              const rows = await dbQuery<ListingRow>(
+                'SELECT address, city, state, zip, price, beds, baths, sqft, lot_sqft, year_built, description, features, advanced_data FROM listings WHERE id = $1 AND tenant_id = $2',
+                [listingId, this.tenantId],
+              );
+              const l = rows[0];
+              if (l) {
+                const estValue = l.advanced_data['estimatedValue'] as number | undefined;
+                const parts = [
+                  `Property: ${l.beds ?? '?'}BR/${l.baths ?? '?'}BA | ${l.sqft ?? '?'} sqft | lot ${l.lot_sqft ?? '?'} sqft`,
+                  `Address: ${l.address}${l.city ? `, ${l.city}` : ''}${l.state ? `, ${l.state}` : ''}${l.zip ? ` ${l.zip}` : ''}`,
+                  `Year Built: ${l.year_built ?? 'unknown'} | List Price: ${l.price ? `$${l.price.toLocaleString()}` : 'TBD'}${estValue ? ` | Est. Value: $${estValue.toLocaleString()}` : ''}`,
+                ];
+                const features = Array.isArray(l.features) && l.features.length > 0 ? l.features.join(', ') : null;
+                if (features) parts.push(`Features: ${features}`);
+                if (l.description) parts.push(`Description: ${l.description}`);
+                propertyContext = `\n\nProperty details:\n${parts.join('\n')}`;
+              }
+            } catch { /* DB unavailable — proceed without listing context */ }
+          }
 
           // Fetch contact profile for personalized copy
           let contactContext = '';
@@ -156,13 +199,18 @@ export class ContentAgent extends BaseAgent {
           }
 
           const platformInstructions = this.buildPlatformInstructions(platforms, preset);
+          const toneCtx = await this.getToneContext();
 
           const contactSection = contactContext
             ? `\n\nPersonalized for buyer:\n${contactContext}\nHighlight features that match their stated criteria and budget where relevant.`
             : '';
 
+          const agentNotes = propertyContext
+            ? (textPrompt ? `\n\nAgent notes: ${textPrompt}` : '')
+            : '';
+
           const rawOutput = await this.ask(
-            `You are writing marketing copy for a real estate agent with a ${tone} tone.\n\nProperty features: ${featureData}${contactSection}\n\n${platformInstructions}\n\nReturn as JSON with only the requested platform fields.`,
+            `You are writing marketing copy for a real estate agent with a ${tone} tone.${toneCtx}${propertyContext}\n\nProperty features: ${featureData}${agentNotes}${contactSection}\n\n${platformInstructions}\n\nReturn as JSON with only the requested platform fields.`,
             ModelTier.BALANCED,
           );
 
@@ -228,6 +276,19 @@ export class ContentAgent extends BaseAgent {
       content: 'No pending content tasks.',
       priority: 3,
     };
+  }
+
+  private async getToneContext(): Promise<string> {
+    const parts: string[] = [];
+    try {
+      const m = await this.readMemory({ path: 'client-profile/tone-model.md' });
+      if (m.content.trim()) parts.push(`Writing style (AI-analyzed from sent emails):\n${m.content.trim()}`);
+    } catch { /* not yet generated */ }
+    try {
+      const p = await this.readMemory({ path: 'client-profile/tone-prefs.md' });
+      if (p.content.trim()) parts.push(`Explicit tone preferences:\n${p.content.trim()}`);
+    } catch { /* not configured */ }
+    return parts.length > 0 ? `\n\n${parts.join('\n\n')}` : '';
   }
 
   private async generateListingVariants(listingData: string): Promise<{

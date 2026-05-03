@@ -13,6 +13,7 @@ export default function BriefingScreen() {
   const loading = useBriefingStore(s => s.loading);
   const setItems = useBriefingStore(s => s.setItems);
   const pendingApprovalIds = useBriefingStore(s => s.pendingApprovalIds);
+  const shiftPendingApproval = useBriefingStore(s => s.shiftPendingApproval);
   const clearPendingApprovals = useBriefingStore(s => s.clearPendingApprovals);
   const [regenerating, setRegenerating] = useState(false);
   const prevItemsLengthRef = useRef<number | null>(null);
@@ -22,21 +23,21 @@ export default function BriefingScreen() {
       const res = await authedFetch('/v1/briefing');
       if (res.ok) {
         const data = await res.json() as { items: Array<{
-          id: string; type: BriefingItem['type']; urgency_score: number;
-          summary_text: string; draft_content: string | null;
-          draft_medium: string | null; suggested_action: string | null;
-          contact_id: string | null; created_at: string;
+          id: string; type: BriefingItem['type']; urgencyScore: number;
+          summaryText: string; draftContent: string | null;
+          draftMedium: string | null; suggestedAction: string | null;
+          contactId: string | null; createdAt: string;
         }> };
         setItems(data.items.map(i => ({
           id: i.id,
           type: i.type,
-          urgencyScore: i.urgency_score,
-          summaryText: i.summary_text,
-          draftContent: i.draft_content,
-          draftMedium: i.draft_medium as BriefingItem['draftMedium'],
-          suggestedAction: i.suggested_action,
-          contactId: i.contact_id,
-          createdAt: i.created_at,
+          urgencyScore: i.urgencyScore,
+          summaryText: i.summaryText,
+          draftContent: i.draftContent,
+          draftMedium: i.draftMedium as BriefingItem['draftMedium'],
+          suggestedAction: i.suggestedAction,
+          contactId: i.contactId,
+          createdAt: i.createdAt,
         })));
       }
     } catch { /* show stale */ }
@@ -60,7 +61,7 @@ export default function BriefingScreen() {
   useEffect(() => {
     if (prevItemsLengthRef.current !== null && prevItemsLengthRef.current > 0 && items.length === 0 && pendingApprovalIds.length > 0) {
       const firstId = pendingApprovalIds[0];
-      clearPendingApprovals();
+      shiftPendingApproval();
       setTimeout(() => router.push(`/approval/${firstId}`), 400);
     }
     prevItemsLengthRef.current = items.length;
@@ -69,7 +70,7 @@ export default function BriefingScreen() {
   function launchCarousel() {
     if (pendingApprovalIds.length === 0) return;
     const firstId = pendingApprovalIds[0];
-    clearPendingApprovals();
+    shiftPendingApproval();
     router.push(`/approval/${firstId}`);
   }
 

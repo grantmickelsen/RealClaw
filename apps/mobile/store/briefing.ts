@@ -19,6 +19,7 @@ interface BriefingState {
   setItems(items: BriefingItem[]): void;
   dismissItem(id: string): void;
   addPendingApproval(id: string): void;
+  shiftPendingApproval(): void;
   clearPendingApprovals(): void;
   clear(): void;
 }
@@ -30,6 +31,7 @@ export const useBriefingStore = create<BriefingState>((set) => ({
   setItems: (items) => set({ items, loading: false }),
   dismissItem: (id) => set((s) => ({ items: s.items.filter((i) => i.id !== id) })),
   addPendingApproval: (id) => set((s) => ({ pendingApprovalIds: [...s.pendingApprovalIds, id] })),
+  shiftPendingApproval: () => set((s) => ({ pendingApprovalIds: s.pendingApprovalIds.slice(1) })),
   clearPendingApprovals: () => set({ pendingApprovalIds: [] }),
   clear: () => set({ items: [], loading: false }),
 }));

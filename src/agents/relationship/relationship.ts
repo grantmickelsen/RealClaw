@@ -1,5 +1,6 @@
+import { v4 as uuidv4 } from 'uuid';
 import { BaseAgent } from '../base-agent.js';
-import { ModelTier } from '../../types/agents.js';
+import { ModelTier, AgentId, Priority } from '../../types/agents.js';
 import type { TaskRequest, TaskResult, AgentQuery, QueryResponse, BriefingSection } from '../../types/messages.js';
 import { MemorySearch } from '../../memory/memory-search.js';
 import type { EventType } from '../../types/events.js';
@@ -306,6 +307,26 @@ Return JSON:
       content: `- **Stage:** Past Client\n- **Closed:** ${new Date().toISOString()}`,
       writtenBy: this.id,
     });
+
+    // Trigger post-closing follow-up sequence in TransactionAgent
+    const txAgent = this.agentRegistry?.get(AgentId.TRANSACTION);
+    if (txAgent) {
+      const req: TaskRequest = {
+        messageId: uuidv4(),
+        timestamp: new Date().toISOString(),
+        correlationId: uuidv4(),
+        type: 'TASK_REQUEST',
+        fromAgent: this.id,
+        toAgent: AgentId.TRANSACTION,
+        priority: Priority.P3_BACKGROUND,
+        taskType: 'post_closing',
+        instructions: `Transaction closed for contact ${contactId}. Generate post-closing follow-up sequence.`,
+        context: { clientId: this.tenantId, contactId },
+        data: { contactId },
+        constraints: { maxTokens: 2048, modelOverride: null, timeoutMs: 30_000, requiresApproval: false, approvalCategory: null },
+      };
+      txAgent.handleTask(req).catch(() => {});
+    }
   }
 
   private async processOpenHouseSignup(payload: Record<string, unknown>): Promise<void> {

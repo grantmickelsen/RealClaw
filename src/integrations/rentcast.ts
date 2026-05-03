@@ -1,5 +1,5 @@
 import { BaseIntegration } from './base-integration.js';
-import type { IntegrationStatus, NormalizedListing } from '../types/integrations.js';
+import type { IntegrationStatus, NormalizedListing, RentCastPropertyRecord } from '../types/integrations.js';
 import { IntegrationId } from '../types/integrations.js';
 import type { MlsProvider, MlsCompsQuery, MarketStats } from './mls-provider.js';
 
@@ -26,6 +26,51 @@ interface RentCastListing {
   propertyType?: string;
   description?: string;
   photos?: string[];
+}
+
+interface RentCastPropertyResponse {
+  formattedAddress?: string;
+  addressLine1?: string;
+  city?: string;
+  state?: string;
+  zipCode?: string;
+  county?: string;
+  latitude?: number;
+  longitude?: number;
+  propertyType?: string;
+  bedrooms?: number;
+  bathrooms?: number;
+  squareFootage?: number;
+  lotSize?: number;
+  yearBuilt?: number;
+  zoning?: string;
+  lastSaleDate?: string;
+  lastSalePrice?: number;
+  ownerName?: string;
+  ownerOccupied?: boolean;
+  features?: {
+    garage?: boolean;
+    garageSpaces?: number;
+    pool?: boolean;
+    spa?: boolean;
+    stories?: number;
+    roofType?: string;
+    constructionType?: string;
+    foundation?: string;
+    heating?: string;
+    cooling?: string;
+    fireplaces?: number;
+  };
+  hoa?: { fee?: number | null; frequency?: string | null };
+  schools?: { elementary?: { district?: string } };
+  taxInfo?: { assessedValue?: number; taxYear?: number; annualTaxAmount?: number };
+  floodZoneType?: string;
+}
+
+interface RentCastAvmResponse {
+  price?: number;
+  priceRangeLow?: number;
+  priceRangeHigh?: number;
 }
 
 interface RentCastMarket {
@@ -129,6 +174,70 @@ export class RentCastIntegration extends BaseIntegration implements MlsProvider 
     ) as RentCastListing[];
 
     return (Array.isArray(data) ? data : []).map(l => this.normalizeListing(l, 'active'));
+  }
+
+  async getPropertyDetails(address: string, zipCode?: string): Promise<RentCastPropertyRecord> {
+    const params = new URLSearchParams({ address });
+    if (zipCode) params.set('zipCode', zipCode);
+
+    const data = await this.authenticatedRequest(
+      'GET',
+      `/v1/properties?${params}`,
+    ) as RentCastPropertyResponse;
+
+    const f = data.features ?? {};
+    return {
+      address: data.formattedAddress ?? data.addressLine1 ?? address,
+      city: data.city ?? '',
+      state: data.state ?? '',
+      zip: data.zipCode ?? zipCode ?? '',
+      county: data.county,
+      latitude: data.latitude,
+      longitude: data.longitude,
+      propertyType: data.propertyType,
+      beds: data.bedrooms,
+      baths: data.bathrooms,
+      sqft: data.squareFootage,
+      lotSqft: data.lotSize,
+      yearBuilt: data.yearBuilt,
+      zoning: data.zoning,
+      lastSaleDate: data.lastSaleDate,
+      lastSalePrice: data.lastSalePrice,
+      ownerName: data.ownerName,
+      ownerOccupied: data.ownerOccupied,
+      garageSpaces: f.garageSpaces,
+      pool: f.pool,
+      spa: f.spa,
+      stories: f.stories,
+      roofType: f.roofType,
+      constructionType: f.constructionType,
+      foundation: f.foundation,
+      heating: f.heating,
+      cooling: f.cooling,
+      fireplaces: f.fireplaces,
+      hoaMonthly: data.hoa?.fee ?? null,
+      schoolDistrict: data.schools?.elementary?.district,
+      taxAssessedValue: data.taxInfo?.assessedValue,
+      taxYear: data.taxInfo?.taxYear,
+      taxAmount: data.taxInfo?.annualTaxAmount,
+      floodZone: data.floodZoneType,
+    };
+  }
+
+  async getAvm(address: string, zipCode?: string): Promise<{ value: number; low: number; high: number }> {
+    const params = new URLSearchParams({ address });
+    if (zipCode) params.set('zipCode', zipCode);
+
+    const data = await this.authenticatedRequest(
+      'GET',
+      `/v1/avm/value?${params}`,
+    ) as RentCastAvmResponse;
+
+    return {
+      value: data.price ?? 0,
+      low: data.priceRangeLow ?? 0,
+      high: data.priceRangeHigh ?? 0,
+    };
   }
 
   /** Implements BaseIntegration abstract method — returns IntegrationStatus */

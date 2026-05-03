@@ -23,6 +23,7 @@ import * as Haptics from 'expo-haptics';
 import { authedFetch } from '../../lib/api';
 import { useApprovalStore } from '../../store/approvals';
 import type { ApprovalItem } from '../../store/approvals';
+import { useBriefingStore } from '../../store/briefing';
 import { SwipeCard } from '../../components/chat/SwipeCard';
 import { EditSheet } from '../../components/chat/EditSheet';
 
@@ -103,7 +104,16 @@ export default function ApprovalScreen() {
         withSpring(1, { damping: 12 }),
       );
       setDone(true);
-      setTimeout(() => router.back(), 1400);
+      setTimeout(() => {
+        const { pendingApprovalIds, shiftPendingApproval } = useBriefingStore.getState();
+        if (pendingApprovalIds.length > 0) {
+          const nextId = pendingApprovalIds[0];
+          shiftPendingApproval();
+          router.replace(`/approval/${nextId}`);
+        } else {
+          router.back();
+        }
+      }, 1400);
     } catch (err) {
       Alert.alert('Error', (err as Error).message);
     } finally {

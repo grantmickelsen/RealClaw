@@ -76,7 +76,8 @@ describe('DealDeadlineMonitorJob', () => {
 
   it('creates P1 alert for milestone within 48-hour window', async () => {
     const mockWsPusher = { push: vi.fn() };
-    const tomorrow = new Date(Date.now() + 20 * 60 * 60 * 1000).toISOString().split('T')[0]; // ~20h from now
+    // Use a date explicitly 36 hours from now so it is always in the future across any timezone/time-of-day
+    const tomorrow = new Date(Date.now() + 36 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     mockQuery
       .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-1' }] })
@@ -160,5 +161,38 @@ describe('DealDeadlineMonitorJob', () => {
       (c: unknown[]) => typeof c[0] === 'string' && (c[0] as string).includes('INSERT INTO deal_alerts'),
     );
     expect(insertCall).toBeDefined(); // DB write still happens
+  });
+
+  it('tenant query excludes cancelled and expired subscriptions', async () => {
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // no tenants → no milestones
+
+    const { worker } = registerDealDeadlineMonitorJob({ host: 'localhost', port: 6379 });
+    await invokeJob(worker);
+
+    const tenantQueryCall = mockQuery.mock.calls[0] as [string, unknown[]?];
+    expect(tenantQueryCall[0]).toContain("subscription_status NOT IN ('cancelled', 'expired')");
+  });
+
+  it('calls sendDealAlertPush when pushService is provided', async () => {
+    const mockWsPusher = { push: vi.fn() };
+    const mockPushService = { sendDealAlertPush: vi.fn().mockResolvedValue(undefined) };
+
+    mockQuery
+      .mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-push' }] })
+      .mockResolvedValueOnce({ rows: [makeMilestone({ tenant_id: 'tenant-push' })] })
+      .mockResolvedValueOnce({ rows: [] }) // no existing alert
+      .mockResolvedValueOnce({ rows: [] }); // INSERT
+
+    const { worker } = registerDealDeadlineMonitorJob(
+      { host: 'localhost', port: 6379 },
+      mockWsPusher,
+      mockPushService as never,
+    );
+    await invokeJob(worker);
+
+    expect(mockPushService.sendDealAlertPush).toHaveBeenCalledOnce();
+    const [calledTenantId, , , priority] = mockPushService.sendDealAlertPush.mock.calls[0] as [string, string, string, number];
+    expect(calledTenantId).toBe('tenant-push');
+    expect(priority).toBe(0); // overdue milestone → P0
   });
 });

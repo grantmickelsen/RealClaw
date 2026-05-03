@@ -32,6 +32,7 @@ import { registerGmailIngestWorker } from './agents/ops/gmail-ingest-job.js';
 import { registerGmailWatchJob } from './agents/ops/gmail-watch-job.js';
 import { createToneAnalysisQueue, getToneAnalysisQueue, registerToneAnalysisWorker } from './agents/ops/tone-analysis-job.js';
 import { createEventBus } from './agents/ops/redis-event-bus.js';
+import type { IEventBus } from './agents/ops/event-bus.js';
 import { createDistributedLock } from './memory/distributed-lock.js';
 import { createPushNotificationService } from './gateway/push-notification.js';
 import type { PushNotificationService } from './gateway/push-notification.js';
@@ -40,6 +41,7 @@ import { query, closePool } from './db/postgres.js';
 import { Coordinator } from './coordinator/coordinator.js';
 import { IntegrationManager } from './integrations/integration-manager.js';
 import { TwilioIntegration } from './integrations/twilio.js';
+import { RentCastIntegration } from './integrations/rentcast.js';
 import { IntegrationId } from './types/integrations.js';
 import { bootstrapCredentialsFromEnv } from './setup/credential-bootstrap.js';
 import { OAuthHandler } from './credentials/oauth-handler.js';
@@ -95,6 +97,7 @@ interface TenantEntry {
   coordinator: Coordinator;
   heartbeat: HeartbeatScheduler | BullMqHeartbeatScheduler;
   integrationManager: IntegrationManager;
+  eventBus: IEventBus;
 }
 
 class TenantRegistry {
@@ -212,6 +215,17 @@ class TenantRegistry {
           },
         });
       }
+
+      // Push notification: approval created or task completed
+      if (this.pushService && correlationId) {
+        const approvalReq = (payload as { approvalRequest?: { approvalId?: string } }).approvalRequest;
+        const text = (payload as { text?: string }).text ?? '';
+        if (approvalReq?.approvalId) {
+          void this.pushService.sendApprovalPush(tenantId, approvalReq.approvalId, text);
+        } else if (text) {
+          void this.pushService.sendTaskCompletePush(tenantId, correlationId, text);
+        }
+      }
     });
 
     // Wire WsPusher so coordinator can push AGENT_TYPING + TOKEN_STREAM events
@@ -282,12 +296,16 @@ class TenantRegistry {
       heartbeat = cronHb;
     }
 
-    this.entries.set(tenantId, { coordinator, heartbeat, integrationManager: tenantIntegrationManager });
+    this.entries.set(tenantId, { coordinator, heartbeat, integrationManager: tenantIntegrationManager, eventBus: tenantEventBus });
     return coordinator;
   }
 
   getIntegrationManager(tenantId: string): IntegrationManager | undefined {
     return this.entries.get(tenantId)?.integrationManager;
+  }
+
+  getEventBus(tenantId: string): IEventBus | null {
+    return this.entries.get(tenantId)?.eventBus ?? null;
   }
 
   async stopAll(): Promise<void> {
@@ -514,7 +532,7 @@ async function bootstrap(): Promise<void> {
   // ─── Deal deadline monitor job (BullMQ, daily at 7 AM UTC) ───
   let dealJobCleanup: (() => Promise<void>) | undefined;
   if (bullMqConnection && dbAvailable) {
-    const { queue: dq, worker: dw } = registerDealDeadlineMonitorJob(bullMqConnection, wsSessionManager);
+    const { queue: dq, worker: dw } = registerDealDeadlineMonitorJob(bullMqConnection, wsSessionManager, pushService ?? undefined);
     dealJobCleanup = async () => {
       await dw.close();
       await dq.close();
@@ -559,6 +577,20 @@ async function bootstrap(): Promise<void> {
         structuredData: { taskType: 'email_ingest', emailRow },
       });
       await coordinator.handleInbound(msg);
+
+      // Dispatch wire fraud compliance check if keywords were found in subject/body
+      if (emailRow['wireFraudSignal']) {
+        const wfText = `${emailRow['subject'] ?? ''} ${emailRow['bodyText'] ?? ''}`.slice(0, 1000);
+        const wfMsg = normalizeInbound('mobile', {
+          text: wfText,
+          channelId: 'gmail-fraud-check',
+          userId: tenantId,
+          username: 'gmail-ingest',
+          correlationId: uuidv4(),
+          structuredData: { taskTypeHint: 'wire_fraud_warn', targetAgent: AgentId.COMPLIANCE },
+        });
+        coordinator.handleInbound(wfMsg).catch(() => {});
+      }
     };
     const gmailWorker = registerGmailIngestWorker(bullMqConnection, vault, dispatchEmailIngest);
     gmailIngestCleanup = async () => { await gmailWorker.close(); };
@@ -1544,6 +1576,12 @@ async function bootstrap(): Promise<void> {
         const approvalRequest = await coordinator.approvalManager.createApprovalRequest([approvalItem]);
         const approvalCorrelationId = uuidv4();
 
+        // Mark as dismissed so it doesn't reappear on reload
+        await query(
+          'UPDATE briefing_items SET dismissed_at = NOW() WHERE id = $1 AND tenant_id = $2',
+          [briefingIdApprove, auth.tenantId],
+        );
+
         // Push TASK_COMPLETE so the WS handler also navigates (belt-and-suspenders)
         wsSessionManager.push(auth.tenantId, {
           type: 'TASK_COMPLETE',
@@ -1823,6 +1861,11 @@ async function bootstrap(): Promise<void> {
         [guestId, auth.tenantId, guestName.trim(), guestPhone ?? null],
       );
 
+      tenantRegistry.getEventBus(auth.tenantId)?.emit(
+        'contact.created',
+        { contactId: guestId, source: 'open_house', name: guestName.trim() },
+      );
+
       sendJson(res, 201, { id: guestId });
       if (brainDumpText) {
         const knowledgeCorrelationId = uuidv4();
@@ -1895,6 +1938,210 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
+    // ─── GET /v1/listings (JWT required) ─────────────────────────────────────
+    if (req.method === 'GET' && url.pathname === '/v1/listings') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      if (!dbAvailable) { sendJson(res, 200, { listings: [] }); return; }
+      const statusFilter = url.searchParams.get('status');
+      const listingsRows = await query<{
+        id: string; address: string; city: string | null; state: string | null; zip: string | null;
+        status: string; price: number | null; beds: number | null; baths: number | null;
+        half_baths: number | null; sqft: number | null; lot_sqft: number | null;
+        year_built: number | null; property_type: string | null; mls_number: string | null;
+        listing_date: string | null; description: string | null; features: string[];
+        photos: string[]; advanced_data: Record<string, unknown>; contact_id: string | null;
+        created_at: string; updated_at: string;
+      }>(
+        `SELECT * FROM listings WHERE tenant_id = $1 AND status != 'archived'
+         ${statusFilter ? "AND status = $2" : ''}
+         ORDER BY created_at DESC`,
+        statusFilter ? [auth.tenantId, statusFilter] : [auth.tenantId],
+      );
+      sendJson(res, 200, { listings: listingsRows.rows });
+      return;
+    }
+
+    // ─── POST /v1/listings/rentcast-lookup (JWT required) ────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/listings/rentcast-lookup') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      const lookupBody = JSON.parse(await readBodySafe(req)) as { address?: string; zipCode?: string };
+      if (!lookupBody.address?.trim()) {
+        sendJson(res, 400, { ok: false, error: 'address required' }); return;
+      }
+      try {
+        const mgr = tenantRegistry.getIntegrationManager(auth.tenantId);
+        const rentcast = mgr?.get(IntegrationId.RENTCAST) as RentCastIntegration | undefined;
+        if (!rentcast) {
+          sendJson(res, 503, { ok: false, error: 'RentCast not configured' }); return;
+        }
+        const [details, avm] = await Promise.allSettled([
+          rentcast.getPropertyDetails(lookupBody.address, lookupBody.zipCode),
+          rentcast.getAvm(lookupBody.address, lookupBody.zipCode),
+        ]);
+        const prop = details.status === 'fulfilled' ? details.value : null;
+        const valuation = avm.status === 'fulfilled' ? avm.value : null;
+        if (!prop) {
+          sendJson(res, 404, { ok: false, error: 'Property not found in RentCast' }); return;
+        }
+        sendJson(res, 200, {
+          ok: true,
+          address: prop.address,
+          city: prop.city,
+          state: prop.state,
+          zip: prop.zip,
+          beds: prop.beds,
+          baths: prop.baths,
+          sqft: prop.sqft,
+          lotSqft: prop.lotSqft,
+          yearBuilt: prop.yearBuilt,
+          propertyType: prop.propertyType,
+          advanced: {
+            estimatedValue: valuation?.value ?? null,
+            estimatedValueLow: valuation?.low ?? null,
+            estimatedValueHigh: valuation?.high ?? null,
+            lastSalePrice: prop.lastSalePrice,
+            lastSaleDate: prop.lastSaleDate,
+            taxAssessedValue: prop.taxAssessedValue,
+            taxAmount: prop.taxAmount,
+            hoaMonthly: prop.hoaMonthly,
+            schoolDistrict: prop.schoolDistrict,
+            floodZone: prop.floodZone,
+            garageSpaces: prop.garageSpaces,
+            pool: prop.pool,
+            spa: prop.spa,
+            stories: prop.stories,
+            roofType: prop.roofType,
+            constructionType: prop.constructionType,
+            foundation: prop.foundation,
+            heating: prop.heating,
+            cooling: prop.cooling,
+            ownerName: prop.ownerName,
+            zoning: prop.zoning,
+          },
+        });
+      } catch (err) {
+        log.error('[listings/rentcast-lookup] failed', { error: (err as Error).message });
+        sendJson(res, 502, { ok: false, error: 'RentCast lookup failed' });
+      }
+      return;
+    }
+
+    // ─── POST /v1/listings (JWT required) ────────────────────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/listings') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database not available' }); return; }
+      const createBody = JSON.parse(await readBodySafe(req)) as Record<string, unknown>;
+      if (!createBody.address) { sendJson(res, 400, { ok: false, error: 'address required' }); return; }
+      const newId = uuidv4();
+      const inserted = await query<{ id: string }>(
+        `INSERT INTO listings
+           (id, tenant_id, address, city, state, zip, status, price, beds, baths, half_baths,
+            sqft, lot_sqft, year_built, property_type, mls_number, listing_date,
+            description, features, photos, advanced_data, contact_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22)
+         RETURNING id`,
+        [
+          newId, auth.tenantId,
+          createBody.address, createBody.city ?? null, createBody.state ?? null, createBody.zip ?? null,
+          createBody.status ?? 'active',
+          createBody.price ?? null, createBody.beds ?? null, createBody.baths ?? null, createBody.halfBaths ?? null,
+          createBody.sqft ?? null, createBody.lotSqft ?? null, createBody.yearBuilt ?? null,
+          createBody.propertyType ?? null, createBody.mlsNumber ?? null, createBody.listingDate ?? null,
+          createBody.description ?? null,
+          JSON.stringify(createBody.features ?? []),
+          JSON.stringify(createBody.photos ?? []),
+          JSON.stringify(createBody.advancedData ?? createBody.advanced_data ?? {}),
+          createBody.contactId ?? null,
+        ],
+      );
+      const listingRow = await query('SELECT * FROM listings WHERE id = $1', [inserted.rows[0]!.id]);
+      sendJson(res, 201, { ok: true, listing: listingRow.rows[0] });
+      return;
+    }
+
+    // ─── GET /v1/listings/:id (JWT required) ─────────────────────────────────
+    if (req.method === 'GET' && url.pathname.startsWith('/v1/listings/') && url.pathname.split('/').length === 4) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      const listingIdGet = decodeURIComponent(url.pathname.slice('/v1/listings/'.length));
+      const row = await query('SELECT * FROM listings WHERE id = $1 AND tenant_id = $2', [listingIdGet, auth.tenantId]);
+      if (!row.rows[0]) { sendJson(res, 404, { ok: false, error: 'Not found' }); return; }
+      sendJson(res, 200, { listing: row.rows[0] });
+      return;
+    }
+
+    // ─── PATCH /v1/listings/:id (JWT required) ───────────────────────────────
+    if (req.method === 'PATCH' && url.pathname.startsWith('/v1/listings/')) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database not available' }); return; }
+      const listingIdPatch = decodeURIComponent(url.pathname.slice('/v1/listings/'.length));
+      const patchBody = JSON.parse(await readBodySafe(req)) as Record<string, unknown>;
+      const PATCH_FIELDS: Record<string, string> = {
+        address: 'address', city: 'city', state: 'state', zip: 'zip',
+        status: 'status', price: 'price', beds: 'beds', baths: 'baths',
+        halfBaths: 'half_baths', sqft: 'sqft', lotSqft: 'lot_sqft',
+        yearBuilt: 'year_built', propertyType: 'property_type',
+        mlsNumber: 'mls_number', listingDate: 'listing_date',
+        description: 'description', contactId: 'contact_id',
+      };
+      const setClauses: string[] = ['updated_at = NOW()'];
+      const params: unknown[] = [listingIdPatch, auth.tenantId];
+      for (const [key, col] of Object.entries(PATCH_FIELDS)) {
+        if (key in patchBody) {
+          setClauses.push(`${col} = $${params.length + 1}`);
+          params.push(patchBody[key] ?? null);
+        }
+      }
+      if ('features' in patchBody) {
+        setClauses.push(`features = $${params.length + 1}`);
+        params.push(JSON.stringify(patchBody.features ?? []));
+      }
+      if ('photos' in patchBody) {
+        setClauses.push(`photos = $${params.length + 1}`);
+        params.push(JSON.stringify(patchBody.photos ?? []));
+      }
+      if ('advancedData' in patchBody || 'advanced_data' in patchBody) {
+        setClauses.push(`advanced_data = $${params.length + 1}`);
+        params.push(JSON.stringify(patchBody.advancedData ?? patchBody.advanced_data ?? {}));
+      }
+      await query(
+        `UPDATE listings SET ${setClauses.join(', ')} WHERE id = $1 AND tenant_id = $2`,
+        params,
+      );
+      const updated = await query('SELECT * FROM listings WHERE id = $1', [listingIdPatch]);
+      sendJson(res, 200, { ok: true, listing: updated.rows[0] });
+      return;
+    }
+
+    // ─── DELETE /v1/listings/:id (JWT required) ───────────────────────────────
+    if (req.method === 'DELETE' && url.pathname.startsWith('/v1/listings/')) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); } catch (err) {
+        sendJson(res, 401, { ok: false, error: (err as Error).message }); return;
+      }
+      const listingIdDel = decodeURIComponent(url.pathname.slice('/v1/listings/'.length));
+      await query(
+        "UPDATE listings SET status = 'archived', updated_at = NOW() WHERE id = $1 AND tenant_id = $2",
+        [listingIdDel, auth.tenantId],
+      );
+      sendJson(res, 200, { ok: true });
+      return;
+    }
+
     // ─── POST /v1/content/generate (JWT required, Professional) ──────────────
     if (req.method === 'POST' && url.pathname === '/v1/content/generate') {
       let auth: AuthContext;
@@ -1923,9 +2170,10 @@ async function bootstrap(): Promise<void> {
         images: genImages,
         keyFeatures: genFeatures,
         tone: genTone,
+        listingId: genListingId,
       } = JSON.parse(contentGenBody) as {
         targetMode?: string; assets?: string[]; textPrompt?: string; platforms?: string[];
-        preset?: string; images?: string[]; keyFeatures?: string; tone?: string;
+        preset?: string; images?: string[]; keyFeatures?: string; tone?: string; listingId?: string;
       };
       const resolvedImages = genAssets ?? genImages ?? [];
       const resolvedText = genTextPrompt ?? genFeatures ?? '';
@@ -1952,6 +2200,7 @@ async function bootstrap(): Promise<void> {
           tone: genTone ?? 'Standard',
           taskTypeHint: genTargetMode === 'staging' ? 'virtual_staging' : 'studio_generate',
           targetAgent: 'content',
+          ...(genListingId ? { listingId: genListingId } : {}),
         },
       };
       sendJson(res, 202, { ok: true, correlationId: genCorrelationId });
@@ -1988,8 +2237,8 @@ async function bootstrap(): Promise<void> {
         sendJson(res, 400, { ok: false, error: 'Failed to read request body' });
         return;
       }
-      const { featureJson, tone: regenTone, preset: regenPreset, keyFeatures: regenFeatures } = JSON.parse(regenBody) as {
-        featureJson?: object; tone?: string; preset?: string; keyFeatures?: string;
+      const { featureJson, tone: regenTone, preset: regenPreset, keyFeatures: regenFeatures, listingId: regenListingId } = JSON.parse(regenBody) as {
+        featureJson?: object; tone?: string; preset?: string; keyFeatures?: string; listingId?: string;
       };
       const regenCorrelationId = uuidv4();
       const regenMsg = {
@@ -2010,6 +2259,7 @@ async function bootstrap(): Promise<void> {
           featureJson,
           taskTypeHint: 'studio_generate',
           targetAgent: 'content',
+          ...(regenListingId ? { listingId: regenListingId } : {}),
         },
       };
       sendJson(res, 202, { ok: true, correlationId: regenCorrelationId });
@@ -2732,6 +2982,304 @@ async function bootstrap(): Promise<void> {
       } catch (err) {
         log.error('[PATCH /v1/deals/:id/documents/:id] failed', { error: String(err) });
         sendJson(res, 500, { ok: false, error: 'Failed to update document' });
+      }
+      return;
+    }
+
+    // ─── GET /v1/tours/days (JWT required, Professional) ─────────────────────
+    if (req.method === 'GET' && url.pathname === '/v1/tours/days') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      if (!dbAvailable) { sendJson(res, 200, { days: [] }); return; }
+      try {
+        const { rows } = await query<Record<string, unknown>>(
+          `SELECT sd.id, sd.contact_id, c.name AS contact_name,
+                  sd.proposed_date, sd.proposed_start_time, sd.proposed_end_time,
+                  sd.status, sd.client_confirmed_at, sd.created_at,
+                  (SELECT COUNT(*) FROM showing_day_properties sdp WHERE sdp.showing_day_id = sd.id)::int AS property_count,
+                  COALESCE(
+                    (SELECT json_agg(photo) FROM (
+                       SELECT (pr.photos->>0) AS photo
+                       FROM showing_day_properties sdp2
+                       JOIN property_results pr ON pr.id = sdp2.property_result_id
+                       WHERE sdp2.showing_day_id = sd.id AND pr.photos IS NOT NULL AND json_array_length(pr.photos) > 0
+                       ORDER BY sdp2.sequence_order LIMIT 3
+                    ) t WHERE photo IS NOT NULL),
+                    '[]'::json
+                  ) AS photos
+           FROM showing_days sd
+           LEFT JOIN contacts c ON c.id = sd.contact_id AND c.tenant_id = sd.tenant_id
+           WHERE sd.tenant_id = $1
+           ORDER BY sd.proposed_date DESC, sd.created_at DESC`,
+          [auth.tenantId],
+        );
+        const days = rows.map(r => ({
+          id: r['id'],
+          contactId: r['contact_id'],
+          contactName: r['contact_name'] ?? null,
+          proposedDate: r['proposed_date'],
+          proposedStartTime: r['proposed_start_time'] ?? null,
+          proposedEndTime: r['proposed_end_time'] ?? null,
+          status: r['status'],
+          clientConfirmedAt: r['client_confirmed_at'] ?? null,
+          propertyCount: Number(r['property_count'] ?? 0),
+          photos: Array.isArray(r['photos']) ? r['photos'].filter(Boolean) : [],
+          createdAt: r['created_at'],
+        }));
+        sendJson(res, 200, { days });
+      } catch (err) {
+        log.error('[GET /v1/tours/days] failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Failed to fetch showing days' });
+      }
+      return;
+    }
+
+    // ─── POST /v1/tours/days (JWT required, Professional) ────────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/tours/days') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
+      let body: string;
+      try { body = await readBodySafe(req); }
+      catch { sendJson(res, 400, { ok: false, error: 'Failed to read body' }); return; }
+      const { contactId: tourContactId } = JSON.parse(body) as { contactId?: string };
+      if (!tourContactId) { sendJson(res, 400, { ok: false, error: 'contactId required' }); return; }
+      try {
+        const contactCheck = await query('SELECT id FROM contacts WHERE id = $1 AND tenant_id = $2', [tourContactId, auth.tenantId]);
+        if (!contactCheck.rows[0]) { sendJson(res, 404, { ok: false, error: 'Contact not found' }); return; }
+        const proposedDate = new Date(Date.now() + 7 * 86_400_000).toISOString().slice(0, 10);
+        const { rows } = await query<Record<string, unknown>>(
+          `INSERT INTO showing_days (tenant_id, contact_id, proposed_date)
+           VALUES ($1, $2, $3) RETURNING *`,
+          [auth.tenantId, tourContactId, proposedDate],
+        );
+        const r = rows[0]!;
+        sendJson(res, 201, {
+          id: r['id'], contactId: r['contact_id'], proposedDate: r['proposed_date'],
+          status: r['status'], createdAt: r['created_at'],
+        });
+      } catch (err) {
+        log.error('[POST /v1/tours/days] failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Failed to create showing day' });
+      }
+      return;
+    }
+
+    // ─── GET /v1/tours/days/:id (JWT required, Professional) ─────────────────
+    if (req.method === 'GET' && url.pathname.match(/^\/v1\/tours\/days\/[^/]+$/)) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      const tourDayId = decodeURIComponent(url.pathname.split('/')[4]!);
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
+      try {
+        const dayResult = await query<Record<string, unknown>>(
+          `SELECT sd.*, c.name AS contact_name FROM showing_days sd
+           LEFT JOIN contacts c ON c.id = sd.contact_id AND c.tenant_id = sd.tenant_id
+           WHERE sd.id = $1 AND sd.tenant_id = $2`,
+          [tourDayId, auth.tenantId],
+        );
+        if (!dayResult.rows[0]) { sendJson(res, 404, { ok: false, error: 'Showing day not found' }); return; }
+        const dr = dayResult.rows[0];
+        const [stopsResult, routeResult] = await Promise.all([
+          query<Record<string, unknown>>(
+            `SELECT sdp.id, sdp.showing_day_id, sdp.property_result_id, sdp.address,
+                    sdp.sequence_order, sdp.scheduled_time, sdp.duration_minutes,
+                    sdp.access_status, sdp.access_notes, sdp.arrived_at, sdp.departed_at,
+                    pr.photos, pr.price, pr.beds, pr.baths, pr.sqft, pr.match_score
+             FROM showing_day_properties sdp
+             LEFT JOIN property_results pr ON pr.id = sdp.property_result_id
+             WHERE sdp.showing_day_id = $1 ORDER BY sdp.sequence_order`,
+            [tourDayId],
+          ),
+          query<Record<string, unknown>>(
+            `SELECT id, showing_day_id, maps_url, total_distance_miles,
+                    total_duration_minutes, warnings, agent_approved_at
+             FROM showing_routes WHERE showing_day_id = $1 LIMIT 1`,
+            [tourDayId],
+          ),
+        ]);
+        const day = {
+          id: dr['id'], contactId: dr['contact_id'], contactName: dr['contact_name'] ?? null,
+          proposedDate: dr['proposed_date'], proposedStartTime: dr['proposed_start_time'] ?? null,
+          proposedEndTime: dr['proposed_end_time'] ?? null, status: dr['status'],
+          clientConfirmedAt: dr['client_confirmed_at'] ?? null,
+          propertyCount: stopsResult.rows.length, photos: [], createdAt: dr['created_at'],
+        };
+        const stops = stopsResult.rows.map(s => ({
+          id: s['id'], showingDayId: s['showing_day_id'], propertyResultId: s['property_result_id'] ?? null,
+          address: s['address'], sequenceOrder: Number(s['sequence_order']),
+          scheduledTime: s['scheduled_time'] ?? null, durationMinutes: Number(s['duration_minutes'] ?? 30),
+          accessStatus: s['access_status'], accessNotes: s['access_notes'] ?? null,
+          arrivedAt: s['arrived_at'] ?? null, departedAt: s['departed_at'] ?? null,
+          photos: Array.isArray(s['photos']) ? s['photos'] : [],
+          price: s['price'] != null ? Number(s['price']) : null,
+          beds: s['beds'] != null ? Number(s['beds']) : null,
+          baths: s['baths'] != null ? Number(s['baths']) : null,
+          sqft: s['sqft'] != null ? Number(s['sqft']) : null,
+          matchScore: s['match_score'] != null ? Number(s['match_score']) : null,
+        }));
+        const rr = routeResult.rows[0];
+        const route = rr ? {
+          id: rr['id'], showingDayId: rr['showing_day_id'], mapsUrl: rr['maps_url'],
+          totalDistanceMiles: Number(rr['total_distance_miles'] ?? 0),
+          totalDurationMinutes: Number(rr['total_duration_minutes'] ?? 0),
+          warnings: Array.isArray(rr['warnings']) ? rr['warnings'] : [],
+          agentApprovedAt: rr['agent_approved_at'] ?? null,
+        } : null;
+        sendJson(res, 200, { day, stops, route });
+      } catch (err) {
+        log.error('[GET /v1/tours/days/:id] failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Failed to fetch showing day' });
+      }
+      return;
+    }
+
+    // ─── PATCH /v1/tours/days/:id (JWT required, Professional) ───────────────
+    if (req.method === 'PATCH' && url.pathname.match(/^\/v1\/tours\/days\/[^/]+$/)) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      const patchDayId = decodeURIComponent(url.pathname.split('/')[4]!);
+      if (!dbAvailable) { sendJson(res, 503, { ok: false, error: 'Database unavailable' }); return; }
+      let patchBody: string;
+      try { patchBody = await readBodySafe(req); }
+      catch { sendJson(res, 400, { ok: false, error: 'Failed to read body' }); return; }
+      const patchFields = JSON.parse(patchBody) as Record<string, unknown>;
+      const ALLOWED = { status: 'status', proposedDate: 'proposed_date', proposedStartTime: 'proposed_start_time', proposedEndTime: 'proposed_end_time' } as const;
+      const setClauses: string[] = ['updated_at = NOW()'];
+      const patchParams: unknown[] = [patchDayId, auth.tenantId];
+      for (const [camel, col] of Object.entries(ALLOWED)) {
+        if (patchFields[camel] !== undefined) {
+          patchParams.push(patchFields[camel]);
+          setClauses.push(`${col} = $${patchParams.length}`);
+        }
+      }
+      try {
+        await query(
+          `UPDATE showing_days SET ${setClauses.join(', ')} WHERE id = $1 AND tenant_id = $2`,
+          patchParams,
+        );
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        log.error('[PATCH /v1/tours/days/:id] failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Failed to update showing day' });
+      }
+      return;
+    }
+
+    // ─── GET /v1/tours/searches/:searchId/results (JWT required, Professional) ─
+    if (req.method === 'GET' && url.pathname.match(/^\/v1\/tours\/searches\/[^/]+\/results$/)) {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      const searchId = decodeURIComponent(url.pathname.split('/')[4]!);
+      if (!dbAvailable) { sendJson(res, 200, { results: [], contactName: null }); return; }
+      try {
+        const searchRow = await query<{ contact_id: string }>(
+          'SELECT contact_id FROM property_searches WHERE id = $1 AND tenant_id = $2',
+          [searchId, auth.tenantId],
+        );
+        if (!searchRow.rows[0]) { sendJson(res, 404, { ok: false, error: 'Search not found' }); return; }
+        const contactRow = await query<{ name: string }>(
+          'SELECT name FROM contacts WHERE id = $1 AND tenant_id = $2',
+          [searchRow.rows[0].contact_id, auth.tenantId],
+        );
+        const { rows } = await query<Record<string, unknown>>(
+          `SELECT id, search_id, mls_number, address, city, zip_code, price, beds, baths, sqft,
+                  year_built, dom, pool, garage_spaces, photos, showing_instructions, showing_type,
+                  listing_agent_name, listing_agent_phone, match_score, matched_criteria,
+                  missing_criteria, compensating_factors
+           FROM property_results WHERE search_id = $1 ORDER BY match_score DESC NULLS LAST`,
+          [searchId],
+        );
+        const results = rows.map(r => ({
+          id: r['id'], searchId: r['search_id'], mlsNumber: r['mls_number'] ?? null,
+          address: r['address'], city: r['city'] ?? null, zipCode: r['zip_code'] ?? null,
+          price: r['price'] != null ? Number(r['price']) : null,
+          beds: r['beds'] != null ? Number(r['beds']) : null,
+          baths: r['baths'] != null ? Number(r['baths']) : null,
+          sqft: r['sqft'] != null ? Number(r['sqft']) : null,
+          yearBuilt: r['year_built'] != null ? Number(r['year_built']) : null,
+          dom: r['dom'] != null ? Number(r['dom']) : null,
+          pool: Boolean(r['pool']),
+          garageSpaces: r['garage_spaces'] != null ? Number(r['garage_spaces']) : null,
+          photos: Array.isArray(r['photos']) ? r['photos'] : [],
+          showingInstructions: r['showing_instructions'] ?? null,
+          showingType: String(r['showing_type'] ?? 'unknown'),
+          listingAgentName: r['listing_agent_name'] ?? null,
+          listingAgentPhone: r['listing_agent_phone'] ?? null,
+          matchScore: r['match_score'] != null ? Number(r['match_score']) : null,
+          matchedCriteria: Array.isArray(r['matched_criteria']) ? r['matched_criteria'] : [],
+          missingCriteria: Array.isArray(r['missing_criteria']) ? r['missing_criteria'] : [],
+          compensatingFactors: Array.isArray(r['compensating_factors']) ? r['compensating_factors'] : [],
+        }));
+        sendJson(res, 200, { results, contactName: contactRow.rows[0]?.name ?? null });
+      } catch (err) {
+        log.error('[GET /v1/tours/searches/:id/results] failed', { error: String(err) });
+        sendJson(res, 500, { ok: false, error: 'Failed to fetch results' });
+      }
+      return;
+    }
+
+    // ─── POST /v1/tours/swipe (JWT required, Professional) ───────────────────
+    if (req.method === 'POST' && url.pathname === '/v1/tours/swipe') {
+      let auth: AuthContext;
+      try { auth = requireAuth(req); }
+      catch (err) { sendJson(res, 401, { ok: false, error: (err as Error).message }); return; }
+      if (!assertPlan(auth, 'professional', res)) return;
+      let body: string;
+      try { body = await readBodySafe(req); }
+      catch { sendJson(res, 400, { ok: false, error: 'Failed to read body' }); return; }
+      const { propertyResultId, decision } = JSON.parse(body) as { propertyResultId?: string; decision?: string };
+      if (!propertyResultId || !decision) { sendJson(res, 400, { ok: false, error: 'propertyResultId and decision required' }); return; }
+      if (decision !== 'yes') { sendJson(res, 200, { ok: true }); return; }
+      if (!dbAvailable) { sendJson(res, 200, { ok: true }); return; }
+      try {
+        // Find the contact for this property result, then the most recent draft showing day
+        const prRow = await query<{ search_id: string }>(
+          'SELECT search_id FROM property_results WHERE id = $1 AND tenant_id = $2',
+          [propertyResultId, auth.tenantId],
+        );
+        if (!prRow.rows[0]) { sendJson(res, 404, { ok: false, error: 'Property not found' }); return; }
+        const searchRow = await query<{ contact_id: string }>(
+          'SELECT contact_id FROM property_searches WHERE id = $1 AND tenant_id = $2',
+          [prRow.rows[0].search_id, auth.tenantId],
+        );
+        if (!searchRow.rows[0]) { sendJson(res, 200, { ok: true }); return; }
+        const dayRow = await query<{ id: string }>(
+          `SELECT id FROM showing_days WHERE tenant_id = $1 AND contact_id = $2
+           AND status IN ('draft','confirmed') ORDER BY created_at DESC LIMIT 1`,
+          [auth.tenantId, searchRow.rows[0].contact_id],
+        );
+        if (!dayRow.rows[0]) { sendJson(res, 200, { ok: true }); return; }
+        const addrRow = await query<{ address: string }>(
+          'SELECT address FROM property_results WHERE id = $1',
+          [propertyResultId],
+        );
+        const address = (addrRow.rows[0]?.address) ?? '';
+        const orderRow = await query<{ max_order: number }>(
+          'SELECT COALESCE(MAX(sequence_order), -1) AS max_order FROM showing_day_properties WHERE showing_day_id = $1',
+          [dayRow.rows[0].id],
+        );
+        const nextOrder = Number(orderRow.rows[0]?.max_order ?? -1) + 1;
+        await query(
+          `INSERT INTO showing_day_properties (showing_day_id, property_result_id, address, sequence_order)
+           VALUES ($1, $2, $3, $4)
+           ON CONFLICT DO NOTHING`,
+          [dayRow.rows[0].id, propertyResultId, address, nextOrder],
+        );
+        sendJson(res, 200, { ok: true });
+      } catch (err) {
+        log.error('[POST /v1/tours/swipe] failed', { error: String(err) });
+        sendJson(res, 200, { ok: true }); // non-critical — don't fail the swipe UX
       }
       return;
     }

@@ -123,12 +123,31 @@ describe('ContentAgent', () => {
     expect(result.approval).toBeDefined();
   });
 
-  it('neighborhood_guide falls to LLM default (no handler yet)', async () => {
+  it('neighborhood_guide blocks and returns complianceIssues when compliance agent unavailable', async () => {
+    // checkContentCompliance catches queryAgent errors and returns { passed: false, flags: ['compliance_check_unavailable'] }
+    // The handler returns early without calling the LLM.
     const agent = makeAgent();
-    const result = await agent.handleTask(makeRequest({ taskType: 'neighborhood_guide' }));
+    const result = await agent.handleTask(makeRequest({ taskType: 'neighborhood_guide', data: { area: '93101' } }));
+
+    expect(result.status).toBe('success');
+    expect(mockLlmRouter.complete).not.toHaveBeenCalled();
+    expect(result.result['complianceIssues']).toContain('compliance_check_unavailable');
+  });
+
+  it('neighborhood_guide generates guide text when compliance passes', async () => {
+    const agent = makeAgent();
+    const mockQueryAgent = vi.fn()
+      .mockResolvedValueOnce({ found: true, data: { results: [{ snippet: 'Market data for 93101' }] }, type: 'QUERY_RESPONSE', messageId: 'a', timestamp: '', correlationId: '', fromAgent: 'kb', toAgent: 'content', queryId: 'q1' })
+      .mockResolvedValueOnce({ found: true, data: { passed: true, flags: [] }, type: 'QUERY_RESPONSE', messageId: 'b', timestamp: '', correlationId: '', fromAgent: 'compliance', toAgent: 'content', queryId: 'q2' });
+    vi.spyOn(agent as never, 'queryAgent').mockImplementation(mockQueryAgent);
+
+    mockLlmRouter.complete.mockResolvedValueOnce({ text: 'Neighborhood guide content', inputTokens: 50, outputTokens: 300, model: 'test', provider: 'anthropic', latencyMs: 100, estimatedCostUsd: 0.001 });
+
+    const result = await agent.handleTask(makeRequest({ taskType: 'neighborhood_guide', data: { area: '93101' } }));
 
     expect(mockLlmRouter.complete).toHaveBeenCalledOnce();
     expect(result.status).toBe('success');
+    expect(result.result['text']).toBe('Neighborhood guide content');
   });
 
   it('heartbeat returns ready status', async () => {
@@ -141,7 +160,7 @@ describe('ContentAgent', () => {
 
   // ─── studio_generate ───────────────────────────────────────────────────────
 
-  it('studio_generate returns JSON with mlsDescription and platform copies', async () => {
+  it('studio_generate returns needs_approval with post_social when compliance passes', async () => {
     const draftJson = JSON.stringify({
       mlsDescription: '3BR/2BA in prime Santa Barbara location',
       instagramCaption: '#JustListed ✨ Stunning 3-bed home',
@@ -150,13 +169,19 @@ describe('ContentAgent', () => {
     mockLlmRouter.complete.mockResolvedValueOnce({ text: draftJson, inputTokens: 100, outputTokens: 200, model: 'test', provider: 'anthropic', latencyMs: 100, estimatedCostUsd: 0.001 });
 
     const agent = makeAgent();
-    // compliance query defaults to passed (no queryTargets in mockConfig → catch returns {passed:true, flags:[]})
+    // Mock compliance agent to return passing result (no flags)
+    vi.spyOn(agent as never, 'queryAgent').mockResolvedValue({
+      messageId: 'q-resp', timestamp: new Date().toISOString(), correlationId: 'c1',
+      type: 'QUERY_RESPONSE', fromAgent: 'compliance' as never, toAgent: 'content' as never,
+      queryId: 'q1', found: true,
+      data: { passed: true, flags: [] },
+    });
+
     const result = await agent.handleTask(makeRequest({
       taskType: 'studio_generate',
       data: { preset: 'new_listing', tone: 'Standard', textPrompt: '3BR in Santa Barbara', platforms: ['MLS', 'Instagram', 'Facebook'] },
     }));
 
-    // Clean content flows through approval gate
     expect(result.status).toBe('needs_approval');
     expect(result.approval?.actionType).toBe('post_social');
 
@@ -239,6 +264,60 @@ describe('ContentAgent', () => {
 
     expect(result.status).toBe('failed');
     expect((result.result['error'] as string)).toContain('No image');
+  });
+
+  // ─── getToneContext injection ───────────────────────────────────────────────
+
+  it('social_batch prompt includes tone model when client-profile/tone-model.md exists', async () => {
+    const agent = makeAgent();
+    mockMemory.read.mockImplementation((req: { path: string }) => {
+      if (req.path === 'client-profile/tone-model.md') {
+        return Promise.resolve({ content: 'Warm, conversational, uses emojis occasionally.' });
+      }
+      if (req.path === 'client-profile/tone-prefs.md') {
+        return Promise.resolve({ content: '' }); // no prefs
+      }
+      return Promise.resolve({ content: '' });
+    });
+
+    mockLlmRouter.complete.mockResolvedValueOnce({ text: 'Instagram post Facebook post LinkedIn post' });
+
+    await agent.handleTask(makeRequest({ taskType: 'social_batch', data: { topic: 'New listing at 123 Main' } }));
+
+    const promptArg = (mockLlmRouter.complete.mock.calls[0] as unknown[])[0] as { messages: { content: string }[] };
+    const promptText = promptArg.messages[0]!.content as string;
+    expect(promptText).toContain('Warm, conversational, uses emojis occasionally.');
+  });
+
+  // ─── neighborhood_guide KB write ───────────────────────────────────────────
+
+  it('neighborhood_guide writes guide to market-data memory after generating', async () => {
+    // Need a config that allows writing to market-data domain
+    const agentWithWriteAccess = new ContentAgent(
+      { ...mockConfig, writeTargets: ['listings', 'market-data'] } as never,
+      mockLlmRouter as never,
+      mockMemory as never,
+      mockEventBus as never,
+      mockAuditLogger as never,
+    );
+    const agent = agentWithWriteAccess;
+    const mockQueryAgent = vi.fn()
+      .mockResolvedValueOnce({ found: true, data: { results: [] }, messageId: 'q1', timestamp: '', correlationId: '', type: 'QUERY_RESPONSE', fromAgent: AgentId.KNOWLEDGE_BASE, toAgent: AgentId.CONTENT, queryId: 'q1' })
+      .mockResolvedValueOnce({ found: true, data: { passed: true, flags: [] }, messageId: 'q2', timestamp: '', correlationId: '', type: 'QUERY_RESPONSE', fromAgent: AgentId.COMPLIANCE, toAgent: AgentId.CONTENT, queryId: 'q2' });
+    vi.spyOn(agent as never, 'queryAgent').mockImplementation(mockQueryAgent);
+
+    mockMemory.read.mockResolvedValue({ content: '' });
+    mockLlmRouter.complete.mockResolvedValueOnce({ text: 'Comprehensive guide for Santa Barbara' });
+
+    await agent.handleTask(makeRequest({ taskType: 'neighborhood_guide', data: { area: 'Santa Barbara, CA' } }));
+
+    expect(mockMemory.write).toHaveBeenCalledWith(
+      expect.objectContaining({
+        path: expect.stringContaining('market-data/neighborhood-guide-'),
+        operation: 'create',
+        content: expect.stringContaining('Santa Barbara, CA'),
+      }),
+    );
   });
 });
 

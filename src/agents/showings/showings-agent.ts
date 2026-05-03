@@ -1,6 +1,6 @@
 import { v4 as uuidv4 } from 'uuid';
 import { BaseAgent } from '../base-agent.js';
-import { AgentId, ModelTier } from '../../types/agents.js';
+import { AgentId, ModelTier, Priority } from '../../types/agents.js';
 import type {
   TaskRequest,
   TaskResult,
@@ -733,7 +733,30 @@ Keep it under 200 words. First-person from the agent.`;
       [showingDayId, agentReport, clientReport],
     );
 
-    // 6. Queue client report for approval via COMMS (side effect)
+    // 6. Write tour reactions to contact memory profile
+    const relAgent = this.agentRegistry?.get(AgentId.RELATIONSHIP);
+    if (relAgent && day.contact_id && notes.some(n => n.structured_reactions)) {
+      const reactionSummary = notes
+        .filter(n => n.structured_reactions)
+        .map(n => `${n.address}: ${n.structured_reactions}`)
+        .join('\n');
+      relAgent.handleTask({
+        messageId: uuidv4(),
+        timestamp: new Date().toISOString(),
+        correlationId: uuidv4(),
+        type: 'TASK_REQUEST',
+        fromAgent: AgentId.COORDINATOR,
+        toAgent: AgentId.RELATIONSHIP,
+        priority: Priority.P3_BACKGROUND,
+        taskType: 'update_contact',
+        instructions: `Post-tour reactions (${tourDate}):\n${reactionSummary}`,
+        context: { clientId: this.tenantId, contactId: day.contact_id },
+        data: { contactId: day.contact_id },
+        constraints: { maxTokens: 512, modelOverride: null, timeoutMs: 10_000, requiresApproval: false, approvalCategory: null },
+      }).catch(() => {});
+    }
+
+    // 7. Queue client report for approval via COMMS (side effect)
     return this.successResult(request, {
       text: agentReport,
       agentReport,

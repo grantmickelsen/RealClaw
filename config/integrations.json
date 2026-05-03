@@ -21,7 +21,7 @@
         "https://www.googleapis.com/auth/calendar"
       ],
       "rateLimitPerMinute": 60,
-      "enabled": false,
+      "enabled": true,
       "healthCheckEndpoint": "/calendar/v3/users/me/calendarList"
     },
     {

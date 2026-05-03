@@ -62,6 +62,7 @@ export function ActionCard({ item }: Props) {
   const [detailOpen, setDetailOpen] = useState(false);
   const [draft, setDraft] = useState(item.draftContent ?? '');
   const [approving, setApproving] = useState(false);
+  const [editorFocused, setEditorFocused] = useState(false);
   const hintFired = useRef(false);
   const dismissItem = useBriefingStore(s => s.dismissItem);
   const addPendingApproval = useBriefingStore(s => s.addPendingApproval);
@@ -203,21 +204,30 @@ export function ActionCard({ item }: Props) {
               </Pressable>
             </View>
 
+            {contactName && (
+              <Text style={styles.sheetContactName}>{contactName}</Text>
+            )}
             <Text style={styles.sheetSummary}>{item.summaryText}</Text>
+            <Text style={styles.sheetTimestamp}>
+              {(() => {
+                const d = new Date((item.createdAt ?? '').replace(' ', 'T'));
+                return isNaN(d.getTime()) ? '' : d.toLocaleString('en-US', { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+              })()}
+            </Text>
 
             {item.draftContent != null && (
               <>
                 <Text style={styles.draftLabel}>Draft (tap to edit)</Text>
-                <ScrollView style={styles.editorScroll} keyboardShouldPersistTaps="handled">
-                  <TextInput
-                    style={styles.editor}
-                    value={draft}
-                    onChangeText={setDraft}
-                    multiline
-                    textAlignVertical="top"
-                    placeholderTextColor="#9CA3AF"
-                  />
-                </ScrollView>
+                <TextInput
+                  style={[styles.editor, editorFocused && styles.editorExpanded]}
+                  value={draft}
+                  onChangeText={setDraft}
+                  multiline
+                  textAlignVertical="top"
+                  placeholderTextColor="#9CA3AF"
+                  onFocus={() => setEditorFocused(true)}
+                  onBlur={() => setEditorFocused(false)}
+                />
               </>
             )}
 
@@ -339,9 +349,10 @@ const styles = StyleSheet.create({
   },
   mediumChipText: { fontSize: 11, fontWeight: '600' },
   closeBtn: { fontSize: 17, color: '#9CA3AF', paddingHorizontal: 4 },
-  sheetSummary: { fontSize: 16, color: '#1a1a1a', lineHeight: 24, marginBottom: 14 },
+  sheetContactName: { fontSize: 15, fontWeight: '700', color: '#374151', marginBottom: 4 },
+  sheetSummary: { fontSize: 16, color: '#1a1a1a', lineHeight: 24, marginBottom: 6 },
+  sheetTimestamp: { fontSize: 12, color: '#9CA3AF', marginBottom: 14 },
   draftLabel: { fontSize: 12, fontWeight: '600', color: '#9CA3AF', marginBottom: 6, textTransform: 'uppercase', letterSpacing: 0.5 },
-  editorScroll: { maxHeight: 220, marginBottom: 14 },
   editor: {
     fontSize: 15,
     color: '#1a1a1a',
@@ -349,9 +360,15 @@ const styles = StyleSheet.create({
     backgroundColor: '#F9FAFB',
     borderRadius: 12,
     padding: 12,
-    minHeight: 100,
+    minHeight: 120,
+    maxHeight: 180,
     borderWidth: 1,
     borderColor: '#E5E7EB',
+    marginBottom: 14,
+  },
+  editorExpanded: {
+    minHeight: 280,
+    maxHeight: 280,
   },
   approveBtn: {
     borderRadius: 14,

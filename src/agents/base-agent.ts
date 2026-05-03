@@ -37,8 +37,8 @@ export abstract class BaseAgent {
   protected readonly auditLogger: AuditLogger;
   private soulPrompt = '';
 
-  // Agent registry for cross-agent queries
-  private agentRegistry?: Map<AgentId, BaseAgent>;
+  // Agent registry for cross-agent queries and task dispatch
+  protected agentRegistry?: Map<AgentId, BaseAgent>;
   private integrationManager?: IntegrationManager;
   private wsPusher?: WsPusher;
 

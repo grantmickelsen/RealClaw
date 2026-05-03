@@ -132,7 +132,7 @@ export const AGENT_CONFIGS: Record<AgentId, AgentConfig> = {
     ],
     subscribesTo: [],
     queryTargets: [AgentId.KNOWLEDGE_BASE, AgentId.COMPLIANCE, AgentId.RESEARCH],
-    writeTargets: ['listings'],
+    writeTargets: ['listings', 'market-data'],
   },
   [AgentId.RESEARCH]: {
     id: AgentId.RESEARCH,

@@ -96,7 +96,7 @@ export class ApprovalManager {
     // Mark as completed in DB if available
     if (this.queryFn) {
       await this.queryFn(
-        `UPDATE approvals SET status = 'completed' WHERE approval_id = $1`,
+        `UPDATE approvals SET status = 'approved' WHERE approval_id = $1`,
         [response.approvalId],
       ).catch(err => log.error('[Approval] DB update failed', { error: (err as Error).message }));
     }

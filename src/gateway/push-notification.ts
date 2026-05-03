@@ -68,6 +68,14 @@ export class PushNotificationService {
     });
   }
 
+  async sendDealAlertPush(tenantId: string, alertId: string, message: string, priority: number): Promise<void> {
+    await this.sendToTenant(tenantId, {
+      title: priority === 0 ? '⚠ Overdue Deal Milestone' : 'Deal Deadline Approaching',
+      body: message.slice(0, 150),
+      data: { alertId, category: 'DEAL_ALERT' },
+    });
+  }
+
   async sendIntegrationDownPush(tenantId: string, integrationId: string): Promise<void> {
     await this.sendToTenant(tenantId, {
       title: 'Integration Disconnected',

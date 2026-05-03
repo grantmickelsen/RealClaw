@@ -78,78 +78,47 @@ describe('rotateRefreshToken', () => {
   });
 
   it('returns null for a revoked token', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{
-        tenant_id: TENANT_ID,
-        user_id: USER_ID,
-        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-        revoked_at: new Date().toISOString(),  // already revoked
-      }],
-      rowCount: 1,
-      command: '', oid: 0, fields: [],
-    } as never);
-
+    // The atomic UPDATE ... WHERE revoked_at IS NULL returns 0 rows — the DB filters out revoked tokens
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as never);
     const result = await rotateRefreshToken(makeRawToken());
     expect(result).toBeNull();
   });
 
   it('returns null for an expired token', async () => {
-    mockQuery.mockResolvedValueOnce({
-      rows: [{
-        tenant_id: TENANT_ID,
-        user_id: USER_ID,
-        expires_at: new Date(Date.now() - 1000).toISOString(),  // expired
-        revoked_at: null,
-      }],
-      rowCount: 1,
-      command: '', oid: 0, fields: [],
-    } as never);
-
+    // The atomic UPDATE ... WHERE expires_at > NOW() returns 0 rows — the DB filters out expired tokens
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as never);
     const result = await rotateRefreshToken(makeRawToken());
     expect(result).toBeNull();
   });
 
-  it('revokes old token and issues a new pair on valid rotation', async () => {
-    // First call: SELECT — valid token
+  it('atomically revokes old token and issues a new pair on valid rotation', async () => {
+    // Single UPDATE ... RETURNING revokes the token and returns the owner in one round-trip
     mockQuery.mockResolvedValueOnce({
-      rows: [{
-        tenant_id: TENANT_ID,
-        user_id: USER_ID,
-        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-        revoked_at: null,
-      }],
+      rows: [{ tenant_id: TENANT_ID, user_id: USER_ID }],
       rowCount: 1,
       command: '', oid: 0, fields: [],
     } as never);
-    // Second call: UPDATE revoked_at
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1, command: '', oid: 0, fields: [] } as never);
-    // Third call: INSERT new refresh_token
-    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 1, command: '', oid: 0, fields: [] } as never);
+    // issueTokenPair: INSERT new refresh_token + SELECT subscription claims (run in parallel)
+    mockQuery.mockResolvedValue({ rows: [], rowCount: 1, command: '', oid: 0, fields: [] } as never);
 
     const result = await rotateRefreshToken(makeRawToken());
 
     expect(result).not.toBeNull();
     expect(result!.accessToken).toBe('mock.access.token');
     expect(result!.expiresIn).toBe(900);
+    expect(result!.tenantId).toBe(TENANT_ID);
+    expect(result!.userId).toBe(USER_ID);
 
-    // Verify revocation UPDATE was called
-    const updateCall = mockQuery.mock.calls[1];
-    expect(updateCall[0]).toContain('UPDATE refresh_tokens SET revoked_at');
+    // First query is the atomic revoke + retrieve UPDATE
+    const updateCall = mockQuery.mock.calls[0];
+    expect(updateCall[0]).toContain('UPDATE refresh_tokens');
+    expect(updateCall[0]).toContain('SET revoked_at = NOW()');
+    expect(updateCall[0]).toContain('RETURNING tenant_id, user_id');
   });
 
   it('second use of a rotated token returns null (single-use)', async () => {
-    // Simulate re-use: SELECT shows the token is already revoked
-    mockQuery.mockResolvedValueOnce({
-      rows: [{
-        tenant_id: TENANT_ID,
-        user_id: USER_ID,
-        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
-        revoked_at: new Date().toISOString(),  // was rotated
-      }],
-      rowCount: 1,
-      command: '', oid: 0, fields: [],
-    } as never);
-
+    // On reuse the UPDATE matches 0 rows because the token was already revoked on first use
+    mockQuery.mockResolvedValueOnce({ rows: [], rowCount: 0, command: '', oid: 0, fields: [] } as never);
     const result = await rotateRefreshToken(makeRawToken());
     expect(result).toBeNull();
   });

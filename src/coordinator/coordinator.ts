@@ -519,6 +519,35 @@ Only include budget/timeline if clearly stated. Empty arrays are fine.`;
       timestamp: new Date().toISOString(),
       payload: { messageId, contactId, extractedSignals: signals },
     });
+
+    // Write extracted signals to the contact's memory profile
+    if (contactId) {
+      const preferences = (signals['preferences'] as string[] | undefined) ?? [];
+      const objections   = (signals['objections'] as string[] | undefined) ?? [];
+      const signalLines  = [
+        signals['budget']   ? `Budget: ${JSON.stringify(signals['budget'])}`   : '',
+        signals['timeline'] ? `Timeline: ${JSON.stringify(signals['timeline'])}` : '',
+        preferences.length  ? `Preferences: ${preferences.join(', ')}` : '',
+        objections.length   ? `Objections: ${objections.join(', ')}`   : '',
+        `Urgency: ${String(signals['urgencyLevel'] ?? 'low')}`,
+        `Sentiment: ${String(signals['sentimentArc'] ?? 'neutral')}`,
+      ].filter(Boolean).join('\n');
+
+      this.dispatcher.dispatchSingle(AgentId.RELATIONSHIP, {
+        messageId: uuidv4(),
+        timestamp: new Date().toISOString(),
+        correlationId: messageId,
+        type: 'TASK_REQUEST',
+        fromAgent: this.agentId,
+        toAgent: AgentId.RELATIONSHIP,
+        priority: Priority.P3_BACKGROUND,
+        taskType: 'update_contact',
+        instructions: `SMS signals (${new Date().toLocaleDateString()}):\n${signalLines}`,
+        context: { clientId: this.clientConfig?.clientId ?? 'default', contactId },
+        data: { contactId },
+        constraints: { maxTokens: 512, modelOverride: null, timeoutMs: 10_000, requiresApproval: false, approvalCategory: null },
+      }).catch(() => {});
+    }
   }
 
   private async reply(message: InboundMessage, text: string): Promise<void> {

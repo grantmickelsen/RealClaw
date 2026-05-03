@@ -82,6 +82,7 @@ export default function MainLayout() {
         <Tabs.Screen name="settings" options={{ href: null }} />
         <Tabs.Screen name="sms"          options={{ href: null }} />
         <Tabs.Screen name="subscription" options={{ href: null }} />
+        <Tabs.Screen name="listings"     options={{ href: null }} />
       </Tabs>
 
       {/* Floating chat button — opens RealClaw conversation thread */}

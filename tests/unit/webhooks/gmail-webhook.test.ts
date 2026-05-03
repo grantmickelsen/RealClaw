@@ -24,9 +24,9 @@ import { handleGmailWebhook, setGmailIngestQueue } from '../../../src/webhooks/g
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function makeReq(authHeader?: string): IncomingMessage {
+function makeReq(authHeader?: string, extraHeaders: Record<string, string> = {}): IncomingMessage {
   return {
-    headers: authHeader ? { authorization: authHeader } : {},
+    headers: { ...(authHeader ? { authorization: authHeader } : {}), ...extraHeaders },
   } as unknown as IncomingMessage;
 }
 
@@ -58,11 +58,12 @@ describe('handleGmailWebhook', () => {
     mockQueue = { add: vi.fn().mockResolvedValue({}), close: vi.fn() };
     setGmailIngestQueue(mockQueue as never);
 
-    process.env.GMAIL_MOCK_MODE = 'true';
+    // Enable dev bypass: requests must include the matching x-webhook-dev-secret header
+    process.env.GMAIL_WEBHOOK_DEV_SECRET = 'test-webhook-secret';
   });
 
   afterEach(() => {
-    delete process.env.GMAIL_MOCK_MODE;
+    delete process.env.GMAIL_WEBHOOK_DEV_SECRET;
   });
 
   it('returns 401 when no Authorization header is present', async () => {
@@ -73,15 +74,13 @@ describe('handleGmailWebhook', () => {
     expect(mockQueue.add).not.toHaveBeenCalled();
   });
 
-  it('accepts a non-Google JWT in GMAIL_MOCK_MODE and returns 204', async () => {
-    // 'Bearer mock' is not a real JWT (single segment) → verifyGoogleJwt returns null
-    // GMAIL_MOCK_MODE=true lets it proceed anyway
-    const req = makeReq('Bearer mock');
+  it('accepts request with dev-secret bypass and returns 204', async () => {
+    // 'Bearer mock' fails JWT verification; the x-webhook-dev-secret header provides the dev bypass
+    const req = makeReq('Bearer mock', { 'x-webhook-dev-secret': 'test-webhook-secret' });
     const res = makeMockRes();
     const body = buildPubSubBody('grant@gmail.com', '12345');
 
-    // DB lookup returns no tenant — just verify we get 204 (not 401)
-    mockQuery.mockResolvedValueOnce({ rows: [] }); // no tenant found
+    mockQuery.mockResolvedValueOnce({ rows: [] }); // no tenant found — just verify we get 204, not 401
 
     await handleGmailWebhook(req, res, body);
 
@@ -89,16 +88,13 @@ describe('handleGmailWebhook', () => {
   });
 
   it('enqueues an ingest job when a known tenant is found for the Gmail address', async () => {
-    const req = makeReq('Bearer mock');
+    const req = makeReq('Bearer mock', { 'x-webhook-dev-secret': 'test-webhook-secret' });
     const res = makeMockRes();
     const body = buildPubSubBody('grant@gmail.com', '99999');
 
-    // DB returns a tenant match
     mockQuery.mockResolvedValueOnce({ rows: [{ tenant_id: 'tenant-grant' }] });
 
     await handleGmailWebhook(req, res, body);
-
-    // Allow async setImmediate to run
     await new Promise(resolve => setImmediate(resolve));
 
     expect(res.getStatus()).toBe(204);
@@ -111,11 +107,10 @@ describe('handleGmailWebhook', () => {
   });
 
   it('does not enqueue a job when the Gmail address has no matching tenant', async () => {
-    const req = makeReq('Bearer mock');
+    const req = makeReq('Bearer mock', { 'x-webhook-dev-secret': 'test-webhook-secret' });
     const res = makeMockRes();
     const body = buildPubSubBody('unknown@gmail.com', '12345');
 
-    // DB returns no match
     mockQuery.mockResolvedValueOnce({ rows: [] });
 
     await handleGmailWebhook(req, res, body);
@@ -123,5 +118,20 @@ describe('handleGmailWebhook', () => {
 
     expect(res.getStatus()).toBe(204);
     expect(mockQueue.add).not.toHaveBeenCalled();
+  });
+
+  it('returns 401 when dev-secret header is missing (JWT also fails)', async () => {
+    // No x-webhook-dev-secret header and non-Google JWT → 401
+    const req = makeReq('Bearer mock');
+    const res = makeMockRes();
+    await handleGmailWebhook(req, res, '{}');
+    expect(res.getStatus()).toBe(401);
+  });
+
+  it('returns 401 when dev-secret header value is wrong', async () => {
+    const req = makeReq('Bearer mock', { 'x-webhook-dev-secret': 'wrong-secret' });
+    const res = makeMockRes();
+    await handleGmailWebhook(req, res, '{}');
+    expect(res.getStatus()).toBe(401);
   });
 });
